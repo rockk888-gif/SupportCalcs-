@@ -1,0 +1,24 @@
+{
+  "name": "PedDose Reference (Prototype)",
+  "short_name": "PedDose",
+  "description": "Pediatric weight-based dosing reference — prototype",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f8f6",
+  "theme_color": "#063f39",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
