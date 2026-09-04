@@ -1,7 +1,7 @@
 // Service worker: caches all app assets on install so the app works
 // with zero network connectivity after the first successful load.
 
-const CACHE_NAME = 'peddose-prototype-v4';
+const CACHE_NAME = 'peddose-prototype-v6';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
