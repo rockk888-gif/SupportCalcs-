@@ -643,15 +643,31 @@ let state = {
 let currentScreen = 1;
 
 // ---------- UNIT TOGGLES ----------
+// Switching units converts whatever value is already in the box, so a value
+// typed under the old unit is never silently reinterpreted under the new one.
 document.getElementById('weightUnitToggle').addEventListener('click', (e) => {
   if (e.target.tagName !== 'BUTTON') return;
   const unit = e.target.dataset.unit;
+  if (unit === state.weightUnit) return;
+  const input = document.getElementById('inputWeight');
+  const raw = parseFloat(input.value);
+  if (!isNaN(raw)) {
+    const kgValue = state.weightUnit === 'lb' ? raw * 0.453592 : raw;
+    input.value = Math.round((unit === 'lb' ? kgValue / 0.453592 : kgValue) * 10) / 10;
+  }
   state.weightUnit = unit;
   [...e.currentTarget.children].forEach(b => b.classList.toggle('active', b.dataset.unit === unit));
 });
 document.getElementById('lengthUnitToggle').addEventListener('click', (e) => {
   if (e.target.tagName !== 'BUTTON') return;
   const unit = e.target.dataset.unit;
+  if (unit === state.lengthUnit) return;
+  const input = document.getElementById('inputLength');
+  const raw = parseFloat(input.value);
+  if (!isNaN(raw)) {
+    const cmValue = state.lengthUnit === 'in' ? raw * 2.54 : raw;
+    input.value = Math.round((unit === 'in' ? cmValue / 2.54 : cmValue) * 10) / 10;
+  }
   state.lengthUnit = unit;
   [...e.currentTarget.children].forEach(b => b.classList.toggle('active', b.dataset.unit === unit));
 });
@@ -674,7 +690,7 @@ function lengthCmToEstimatedWeightKg(lengthCm) {
   // [length_cm, measured_mean_weight_kg] anchor points per published zone data
   const bands = [
     [46, 3.5], [52, 4.38], [60, 7.56], [67, 8.80], [75, 10.97],
-    [85, 13.84], [98, 17.40], [112, 22.59], [128, 28.40], [146.5, 36.71]
+    [85, 13.84], [98, 17.40], [112, 22.59], [128, 28.40], [TAPE_MAX_LENGTH_CM, 36.71]
   ];
   if (lengthCm <= bands[0][0]) return bands[0][1];
   if (lengthCm > bands[bands.length-1][0]) return null; // beyond tape range — use age-based fallback instead
@@ -691,13 +707,17 @@ function lengthCmToEstimatedWeightKg(lengthCm) {
 
 // ---------- BEYOND-TAPE-RANGE FALLBACK: age-based estimation ----------
 // IMPORTANT SOURCING NOTE: There is no single US-endorsed age-based weight
-// formula. The formula below (Luscombe & Owens / "updated APLS", 3×age+7 for
-// ages 6-12) and the "Best Guess" method are validated in UK/Australian
-// pediatric populations, not US-derived, and are NOT AHA/AAP-endorsed.
-// They are offered here as a labeled, secondary, evidence-based estimate —
-// never presented as a US guideline standard. Actual measured weight should
-// always be obtained in preference to any age-based estimate, and this
-// fallback should be replaced with an institution's own preferred method
+// formula. The Luscombe & Owens / "updated APLS" source formula is age-banded
+// (distinct coefficients across sub-ranges of 1-12y); this simplified below
+// applies a single 3×age+7 slope across the whole 1-12y span as a coarse
+// approximation, applied only when a real Broselow tape doesn't reach —
+// it is NOT a verified reproduction of the original age-banded coefficients.
+// It and the "Best Guess" method are validated in UK/Australian pediatric
+// populations, not US-derived, and are NOT AHA/AAP-endorsed. Offered here as
+// a labeled, secondary, evidence-based estimate — never presented as a US
+// guideline standard. Actual measured weight should always be obtained in
+// preference to any age-based estimate, and this fallback should be replaced
+// with an institution's own preferred method (with verified coefficients)
 // during P&T configuration.
 function ageYearsToEstimatedWeightKg(ageYears) {
   if (ageYears === null || ageYears === undefined) return null;
@@ -764,6 +784,14 @@ function toggleConfirm() {
 }
 
 // ---------- VALIDATION ----------
+// Plausible-range bounds (not clinical limits, just guards against fat-finger
+// entry — e.g. a mis-toggled unit or a stray extra digit — reaching the dose math).
+const MIN_PLAUSIBLE_WEIGHT_KG = 0.3;
+const MAX_PLAUSIBLE_WEIGHT_KG = 150;
+const MIN_PLAUSIBLE_LENGTH_CM = 20;
+const MAX_PLAUSIBLE_LENGTH_CM = 200;
+const MAX_PLAUSIBLE_AGE_YEARS = 18;
+
 function validateScreen1() {
   const wRaw = parseFloat(document.getElementById('inputWeight').value);
   const lRaw = parseFloat(document.getElementById('inputLength').value);
@@ -774,14 +802,35 @@ function validateScreen1() {
     errEl.style.display = 'block';
     return false;
   }
-  errEl.style.display = 'none';
 
-  state.weightKg = isNaN(wRaw) ? null : (state.weightUnit === 'lb' ? wRaw * 0.453592 : wRaw);
-  state.lengthCm = isNaN(lRaw) ? null : (state.lengthUnit === 'in' ? lRaw * 2.54 : lRaw);
+  const weightKgCandidate = isNaN(wRaw) ? null : (state.weightUnit === 'lb' ? wRaw * 0.453592 : wRaw);
+  const lengthCmCandidate = isNaN(lRaw) ? null : (state.lengthUnit === 'in' ? lRaw * 2.54 : lRaw);
+
+  if (weightKgCandidate !== null && (weightKgCandidate < MIN_PLAUSIBLE_WEIGHT_KG || weightKgCandidate > MAX_PLAUSIBLE_WEIGHT_KG)) {
+    errEl.textContent = `Enter a plausible weight (${MIN_PLAUSIBLE_WEIGHT_KG}–${MAX_PLAUSIBLE_WEIGHT_KG} kg). Check the value and the kg/lb toggle.`;
+    errEl.style.display = 'block';
+    return false;
+  }
+  if (lengthCmCandidate !== null && (lengthCmCandidate < MIN_PLAUSIBLE_LENGTH_CM || lengthCmCandidate > MAX_PLAUSIBLE_LENGTH_CM)) {
+    errEl.textContent = `Enter a plausible length (${MIN_PLAUSIBLE_LENGTH_CM}–${MAX_PLAUSIBLE_LENGTH_CM} cm). Check the value and the cm/in toggle.`;
+    errEl.style.display = 'block';
+    return false;
+  }
 
   const ageY = parseFloat(document.getElementById('inputAgeYears').value);
   const ageM = parseFloat(document.getElementById('inputAgeMonths').value);
-  state.ageYears = !isNaN(ageY) ? ageY : (!isNaN(ageM) ? ageM / 12 : null);
+  const ageYearsCandidate = !isNaN(ageY) ? ageY : (!isNaN(ageM) ? ageM / 12 : null);
+
+  if (ageYearsCandidate !== null && (ageYearsCandidate < 0 || ageYearsCandidate > MAX_PLAUSIBLE_AGE_YEARS)) {
+    errEl.textContent = `Enter a plausible age (0–${MAX_PLAUSIBLE_AGE_YEARS} years).`;
+    errEl.style.display = 'block';
+    return false;
+  }
+
+  errEl.style.display = 'none';
+  state.weightKg = weightKgCandidate;
+  state.lengthCm = lengthCmCandidate;
+  state.ageYears = ageYearsCandidate;
 
   return true;
 }
@@ -850,6 +899,20 @@ function buildWeightScreen() {
         <div class="alert-head">⚠ No measured weight entered</div>
         This value is a length-based estimate, not a measured weight. Published validation data show the tape tends to <strong>underestimate</strong> actual weight, with the gap widening at longer lengths. Obtain actual weight as soon as feasible.
       </div>`;
+  }
+
+  // Plausibility check — measured weight vs. age-based expected weight. Kept
+  // deliberately loose (50%) since weight-for-age has wide natural variance;
+  // this is a fat-finger/unit-mixup catch, not a growth-chart judgment.
+  if (hasWeight && ageEstKg !== null) {
+    const agePctDiff = Math.abs(state.weightKg - ageEstKg) / ageEstKg * 100;
+    if (agePctDiff >= 50) {
+      alertContainer.innerHTML += `
+        <div class="alert-box mild">
+          <div class="alert-head">ⓘ Weight atypical for entered age</div>
+          Measured weight differs from a typical weight-for-age estimate (~${ageEstKg.toFixed(1)} kg) by about ${agePctDiff.toFixed(0)}%. This is a rough plausibility check, not a growth chart — double-check the age and weight entries, or this may simply reflect this child's individual growth curve.
+        </div>`;
+    }
   }
 
   // Divergence check — only runs when BOTH measured weight and a length-based estimate are present
@@ -1038,14 +1101,33 @@ const DRUGS_CRASH_DEXTROSE = [
 ];
 
 function renderDoseCard(drug, weightKg, ageYears) {
+  const hasAge = ageYears !== null && ageYears !== undefined && !isNaN(ageYears);
+
+  // Age-tiered drugs (e.g., succinylcholine) vary several-fold per kg across
+  // tiers. Guessing a tier when age is unknown risks silently under-dosing a
+  // paralytic, so we require age instead of defaulting to any single tier.
+  if (drug.ageTieredMgPerKg && !hasAge) {
+    const tierRef = drug.ageTieredMgPerKg.map(t => `${t.label}: ${t.mgPerKg} mg/kg`).join(' · ');
+    return `
+      <div class="dose-card">
+        <div class="dose-header"><div class="drug-name">${drug.name}</div></div>
+        <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+        <div class="alert-box moderate" style="margin-bottom:10px;">
+          <div class="alert-head">⚠ Age required to calculate</div>
+          Dose per kg for ${drug.name} varies by age. Enter patient age on the measurements screen to calculate. Reference tiers — ${tierRef}.
+        </div>
+        <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+        <div class="dose-source">Source: ${drug.source}</div>
+      </div>`;
+  }
+
   // Age-tiered dosing (e.g., succinylcholine) takes precedence over flat mg/kg
   let effectiveMgPerKg = drug.mgPerKg;
   let tierLabel = '';
   if (drug.ageTieredMgPerKg) {
-    const age = ageYears !== null && ageYears !== undefined ? ageYears : 999; // assume oldest tier if age unknown
-    const tier = drug.ageTieredMgPerKg.find(t => age <= t.maxAgeYears) || drug.ageTieredMgPerKg[drug.ageTieredMgPerKg.length - 1];
+    const tier = drug.ageTieredMgPerKg.find(t => ageYears <= t.maxAgeYears) || drug.ageTieredMgPerKg[drug.ageTieredMgPerKg.length - 1];
     effectiveMgPerKg = tier.mgPerKg;
-    tierLabel = ` (${tier.label} tier${ageYears === null || ageYears === undefined ? ' — age not entered, using oldest-tier default' : ''})`;
+    tierLabel = ` (${tier.label} tier)`;
   }
 
   // Fluid bolus (mL/kg) rendering path
