@@ -578,6 +578,9 @@
 
         <div class="section-label">Bradycardia</div>
         <div id="doseCardsBrady"></div>
+
+        <div class="section-label">Defibrillation</div>
+        <div id="doseCardsDefib"></div>
       </div>
 
       <div class="dose-category" id="catRsi">
@@ -959,8 +962,8 @@ const DRUGS_ARREST = [
     mgPerKg: 0.01,
     maxMg: 1,
     concentration: '1:10,000 (0.1 mg/mL)',
-    note: 'Repeat every 3–5 min, IV/IO',
-    source: 'AHA/AAP 2025 PALS Guidelines, Circulation — Part 8'
+    note: 'Repeat every 3–5 min, IV/IO. Anchor drug for nonshockable arrest — give as early as possible. The 1 mg cap is reached around ~100 kg, so it rarely limits true pediatric dosing but can matter in large adolescents.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8); Marino BS et al., Circulation 2018'
   },
   {
     name: 'Amiodarone',
@@ -968,17 +971,17 @@ const DRUGS_ARREST = [
     mgPerKg: 5,
     maxMg: 300,
     concentration: 'per institutional stock',
-    note: 'Bolus dose',
-    source: 'AHA/AAP 2025 PALS Guidelines, Circulation — Part 8'
+    note: 'Bolus dose for shock-refractory VF/pVT; may repeat up to a cumulative total loading dose of 15 mg/kg across boluses.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8)'
   },
   {
     name: 'Lidocaine',
     indication: 'VF / pulseless VT (alt. to amiodarone)',
     mgPerKg: 1,
-    maxMg: null,
+    maxMg: 100,
     concentration: 'per institutional stock',
-    note: 'Use if amiodarone unavailable',
-    source: 'AHA/AAP 2025 PALS Guidelines'
+    note: 'Use if amiodarone unavailable. Guidance states "adult ceiling applies" without giving a specific mg figure — 100 mg reflects the commonly cited adult single-dose ceiling; confirm against your institutional protocol.',
+    source: 'AHA/AAP 2025 PALS Guidelines; Lasa JJ et al., Circulation 2025 (Part 8)'
   }
 ];
 
@@ -989,18 +992,36 @@ const DRUGS_BRADY = [
     mgPerKg: 0.01,
     maxMg: 1,
     concentration: '1:10,000 (0.1 mL/kg)',
-    note: 'IV/IO',
-    source: 'AHA 2025 PALS Bradycardia Algorithm'
+    note: 'IV/IO. For bradycardia with poor perfusion despite adequate oxygenation/ventilation (heart rate <60/min); hypoxia-driven bradycardia is treated with oxygenation/ventilation first.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8); Marino BS et al., Circulation 2018'
   },
   {
     name: 'Atropine',
     indication: 'Vagally-mediated bradycardia',
     mgPerKg: 0.02,
     maxMg: 0.5,
-    minMg: 0.1,
     concentration: 'per institutional stock',
-    note: 'Less reliable than in adults; best for vagal etiology',
-    source: 'AHA 2025 PALS Bradycardia Algorithm'
+    note: 'Vagolytic — reserved for bradycardia from increased vagal tone or AV block, not hypoxia-driven bradycardia. No minimum dose required per the 2015 AHA update. (A higher single-dose range, 0.6–1.0 mg / up to 2 mg in adolescents, appears in the ACR Manual on Contrast Media for a different indication — contrast-reaction anaphylaxis — and does not apply to this bradycardia/arrest use.)',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8); de Caen AR et al., Pediatrics 2015'
+  }
+];
+
+const DEFIBRILLATION = [
+  {
+    name: 'Defibrillation — first shock',
+    indication: 'Shockable rhythm (VF / pulseless VT)',
+    jPerKg: 2,
+    concentration: 'Biphasic, per device protocol',
+    note: 'If unsuccessful, escalate to 4 J/kg for subsequent shocks.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8)'
+  },
+  {
+    name: 'Defibrillation — subsequent shocks',
+    indication: 'Persistent/recurrent shockable rhythm',
+    jPerKg: 4,
+    concentration: 'Biphasic, per device protocol',
+    note: 'Higher subsequent doses may be considered. Do not exceed 10 J/kg or the adult dose, whichever is lower.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8)'
   }
 ];
 
@@ -1011,10 +1032,9 @@ const DRUGS_RSI_PRETREAT = [
     indication: 'Pretreatment — blunt bradycardia risk during laryngoscopy/succinylcholine',
     mgPerKg: 0.02,
     maxMg: 0.5,
-    minMg: 0.1,
     concentration: 'per institutional stock',
-    note: 'Contested — see clinical judgment note above. Some sources restrict to age <1y or succinylcholine use.',
-    source: 'Emergency airway pharmacology literature; 2020 PALS ("may be reasonable" in high-risk patients)'
+    note: 'Contested — see clinical judgment note above. Some sources restrict to age <1y or succinylcholine use. No minimum dose required per the 2015 AHA update.',
+    source: 'Emergency airway pharmacology literature; Lasa JJ et al., Circulation 2025 (Part 8, "may be reasonable" in high-risk patients)'
   },
   {
     name: 'Lidocaine',
@@ -1144,6 +1164,20 @@ function renderDoseCard(drug, weightKg, ageYears) {
       </div>`;
   }
 
+  // Defibrillation (J/kg) rendering path
+  if (drug.jPerKg !== undefined) {
+    const doseJ = drug.jPerKg * weightKg;
+    return `
+      <div class="dose-card">
+        <div class="dose-header"><div class="drug-name">${drug.name}</div></div>
+        <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+        <div class="dose-formula">${drug.jPerKg} J/kg × ${weightKg.toFixed(1)} kg = ${doseJ.toFixed(0)} J</div>
+        <div class="dose-result"><span class="dose-amount">${doseJ.toFixed(0)} J</span></div>
+        <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+        <div class="dose-source">Source: ${drug.source}</div>
+      </div>`;
+  }
+
   // Dextrose (g/kg) rendering path
   if (drug.mgPerKgIsDextroseGramsPerKg !== undefined) {
     const doseG = drug.mgPerKgIsDextroseGramsPerKg * weightKg;
@@ -1233,6 +1267,7 @@ function buildDoseScreen() {
   const containers = {
     arrestContainer: document.getElementById('doseCardsArrest'),
     bradyContainer: document.getElementById('doseCardsBrady'),
+    defibContainer: document.getElementById('doseCardsDefib'),
     rsiPretreat: document.getElementById('doseCardsRsiPretreat'),
     rsiInduction: document.getElementById('doseCardsRsiInduction'),
     rsiParalysis: document.getElementById('doseCardsRsiParalysis'),
@@ -1250,6 +1285,7 @@ function buildDoseScreen() {
 
   containers.arrestContainer.innerHTML = DRUGS_ARREST.map(d => renderDoseCard(d, w, age)).join('');
   containers.bradyContainer.innerHTML = DRUGS_BRADY.map(d => renderDoseCard(d, w, age)).join('');
+  containers.defibContainer.innerHTML = DEFIBRILLATION.map(d => renderDoseCard(d, w, age)).join('');
   containers.rsiPretreat.innerHTML = DRUGS_RSI_PRETREAT.map(d => renderDoseCard(d, w, age)).join('');
   containers.rsiInduction.innerHTML = DRUGS_RSI_INDUCTION.map(d => renderDoseCard(d, w, age)).join('');
   containers.rsiParalysis.innerHTML = DRUGS_RSI_PARALYSIS.map(d => renderDoseCard(d, w, age)).join('');
