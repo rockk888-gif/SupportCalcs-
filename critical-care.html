@@ -1,0 +1,1414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Pediatric Weight-Based Dosing — Critical Care</title>
+
+<!-- Set the theme before first paint so there's no light/dark flash -->
+<script>
+(function () {
+  try {
+    var saved = localStorage.getItem('peddose-cc-theme');
+    var theme = saved || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark');
+    document.documentElement.dataset.theme = theme;
+  } catch (e) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+})();
+</script>
+
+<!-- PWA manifest (Android / Chrome install behavior) -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b0d0e">
+
+<!-- iOS home-screen / standalone app behavior -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PedDose">
+<link rel="apple-touch-icon" href="icon-180.png">
+
+<!-- Prevent iOS from auto-detecting phone numbers as tappable links,
+     which can visually break the dose-number display -->
+<meta name="format-detection" content="telephone=no">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap">
+
+<style>
+  :root {
+    --ink: #f5f6f4;
+    --paper: #0b0d0e;
+    --panel: #171b1c;
+    --line: #34393b;
+    --muted: #a7aeb0;
+    --primary: #2ee6c4;
+    --primary-dark: #17b89c;
+    --primary-ink: #00201b;
+    --amber: #ffb020;
+    --amber-bg: rgba(255,176,32,0.14);
+    --amber-text: #ffd27a;
+    --red: #ff5c52;
+    --red-bg: rgba(255,92,82,0.14);
+    --red-ink: #1a0402;
+    --green-bg: rgba(46,230,196,0.12);
+    --mild-bg: #1f2426;
+    --formula-bg: #0b0d0e;
+    --tabs-bg: #1f2426;
+    --header-bg: #000000;
+    --mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+    --display: 'Archivo', system-ui, sans-serif;
+  }
+  :root[data-theme="light"] {
+    --ink: #12161a;
+    --paper: #f6f7f6;
+    --panel: #ffffff;
+    --line: #d7dbd9;
+    --muted: #5b6467;
+    --primary: #0f9c86;
+    --primary-dark: #0c7c6b;
+    --primary-ink: #ffffff;
+    --amber: #a5670a;
+    --amber-bg: #fff3de;
+    --amber-text: #7a4d05;
+    --red: #c62f27;
+    --red-bg: #ffe6e3;
+    --red-ink: #ffffff;
+    --green-bg: #e3f7f2;
+    --mild-bg: #eef1f1;
+    --formula-bg: #f6f7f6;
+    --tabs-bg: #e9ecec;
+    --header-bg: #12161a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--display);
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.45;
+  }
+
+  .app {
+    max-width: 560px;
+    margin: 0 auto;
+    min-height: 100vh;
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header.topbar {
+    background: var(--header-bg);
+    color: #fff;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 2px solid var(--primary);
+    gap: 10px;
+  }
+  header.topbar .brand {
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: 0.01em;
+  }
+  header.topbar .tag {
+    font-size: 10.5px;
+    color: var(--amber);
+    font-family: var(--mono);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  header.topbar .head-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .theme-toggle {
+    background: transparent;
+    border: 1.5px solid rgba(255,255,255,0.35);
+    color: #fff;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .theme-toggle svg { width: 16px; height: 16px; }
+  .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+
+  .step-indicator {
+    display: flex;
+    gap: 5px;
+    padding: 14px 20px 0;
+  }
+  .step-indicator .dot {
+    flex: 1;
+    height: 4px;
+    background: var(--line);
+    border-radius: 3px;
+    transition: background 0.2s;
+  }
+  .step-indicator .dot.active { background: var(--primary); }
+  .step-indicator .dot.done { background: var(--primary); opacity: 0.4; }
+
+  main {
+    flex: 1;
+    padding: 24px 20px;
+    padding-bottom: 110px;
+  }
+
+  .screen { display: none; }
+  .screen.active { display: block; animation: fadein 0.15s ease-out; }
+  @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
+  h1.screen-title {
+    font-size: 22px;
+    margin: 4px 0 8px;
+    font-weight: 800;
+  }
+  p.screen-sub {
+    font-size: 14px;
+    color: var(--muted);
+    margin: 0 0 24px;
+    line-height: 1.5;
+  }
+
+  .field-group { margin-bottom: 24px; }
+  .field-label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .field-label .opt {
+    text-transform: none;
+    font-weight: 500;
+    letter-spacing: 0;
+    opacity: 0.8;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 10px;
+  }
+  input[type="number"] {
+    flex: 1;
+    font-size: 26px;
+    font-family: var(--mono);
+    font-weight: 700;
+    padding: 16px;
+    border: 2px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+    color: var(--ink);
+    width: 100%;
+  }
+  input[type="number"]:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
+
+  .unit-toggle {
+    display: flex;
+    border: 2px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .unit-toggle button {
+    border: none;
+    background: var(--panel);
+    padding: 0 16px;
+    min-width: 52px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--mono);
+  }
+  .unit-toggle button.active {
+    background: var(--primary);
+    color: var(--primary-ink);
+  }
+
+  .helper-note {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .helper-note.warn { color: var(--amber); font-weight: 600; }
+
+  button.primary-btn {
+    width: 100%;
+    background: var(--primary);
+    color: var(--primary-ink);
+    border: none;
+    padding: 18px;
+    font-size: 16px;
+    font-weight: 800;
+    border-radius: 14px;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+  }
+  button.primary-btn:hover { background: var(--primary-dark); }
+  button.primary-btn:disabled {
+    background: var(--line);
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  button.ghost-btn {
+    width: 100%;
+    background: transparent;
+    color: var(--muted);
+    border: 2px solid var(--line);
+    padding: 14px;
+    font-size: 14px;
+    font-weight: 700;
+    border-radius: 14px;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+
+  .footer-fixed {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 560px;
+    background: linear-gradient(to top, var(--paper) 65%, transparent);
+    padding: 24px 20px 26px;
+  }
+
+  /* Weight summary card */
+  .weight-card {
+    background: var(--panel);
+    border: 2px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .weight-card.primary-source {
+    border-color: var(--primary);
+  }
+  .weight-card-label {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 9px;
+  }
+  .weight-card-label .badge-primary {
+    background: var(--primary);
+    color: var(--primary-ink);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+  }
+  .weight-card-label .badge-estimate {
+    background: var(--line);
+    color: var(--muted);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .weight-value {
+    font-family: var(--mono);
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+  .weight-value .unit { font-size: 15px; color: var(--muted); font-weight: 500; }
+
+  .zone-chip {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    margin-top: 8px;
+  }
+
+  /* Divergence / plausibility alerts */
+  .alert-box {
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .alert-box.mild { background: var(--mild-bg); border: 1.5px solid var(--line); color: var(--ink); }
+  .alert-box.moderate { background: var(--amber-bg); border: 2px solid var(--amber); color: var(--amber-text); }
+  .alert-box.severe { background: var(--red-bg); border: 2px solid var(--red); color: var(--red); }
+  .alert-box .alert-head {
+    font-weight: 800;
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  /* Dose cards */
+  .dose-card {
+    background: var(--panel);
+    border: 2px solid var(--line);
+    border-radius: 16px;
+    padding: 19px 20px;
+    margin-bottom: 14px;
+  }
+  .dose-card .dose-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .dose-card .drug-name {
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 800;
+  }
+  .dose-card .indication {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 600;
+  }
+  .dose-formula {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--muted);
+    background: var(--formula-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 11px;
+    line-height: 1.6;
+  }
+  .dose-result {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    margin-bottom: 8px;
+  }
+  .dose-result .dose-amount {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--primary);
+  }
+  .dose-result .dose-max-flag {
+    font-size: 11px;
+    background: var(--amber-bg);
+    color: var(--amber);
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-weight: 800;
+  }
+  .dose-source {
+    font-size: 11px;
+    color: var(--muted);
+    border-top: 1px dashed var(--line);
+    padding-top: 9px;
+    margin-top: 4px;
+  }
+
+  .verify-banner {
+    background: var(--red);
+    color: var(--red-ink);
+    padding: 15px 16px;
+    border-radius: 14px;
+    font-size: 14px;
+    font-weight: 800;
+    text-align: center;
+    margin: 20px 0 10px;
+    letter-spacing: 0.01em;
+  }
+
+  .section-label {
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 22px 0 12px;
+  }
+
+  .protocol-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--primary);
+    background: var(--green-bg);
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-weight: 700;
+    margin-bottom: 18px;
+  }
+  .protocol-tag .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+
+  /* Category tab switcher — top of dose screen */
+  .category-tabs {
+    display: flex;
+    gap: 6px;
+    background: var(--tabs-bg);
+    border-radius: 14px;
+    padding: 5px;
+    margin: 4px 0 18px;
+  }
+  .cat-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 800;
+    padding: 12px 6px;
+    border-radius: 10px;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+  }
+  .cat-tab.active {
+    background: var(--panel);
+    color: var(--ink);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+
+  .dose-category { display: none; }
+  .dose-category.active { display: block; animation: fadein 0.15s ease-out; }
+
+  .adult-range-flag {
+    background: var(--amber-bg);
+    border: 2px solid var(--amber);
+    color: var(--amber-text);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 18px 0 0;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .adult-range-flag .alert-head {
+    font-weight: 800;
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .back-link {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 13.5px;
+    font-weight: 700;
+    padding: 0;
+    margin-bottom: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .disclaimer-block {
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--mild-bg);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-top: 20px;
+    line-height: 1.55;
+  }
+
+  .confirm-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 2px solid var(--line);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-top: 16px;
+    cursor: pointer;
+  }
+  .confirm-row input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--primary);
+    flex-shrink: 0;
+  }
+  .confirm-row label {
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="brand">PedDose Reference</span>
+    <div class="head-right">
+      <span class="tag">PROTOTYPE — NOT FOR CLINICAL USE</span>
+      <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Switch between light and dark theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="step-indicator" id="stepIndicator">
+    <div class="dot active" data-step="1"></div>
+    <div class="dot" data-step="2"></div>
+    <div class="dot" data-step="3"></div>
+  </div>
+
+  <main>
+
+    <!-- SCREEN 1: PATIENT INPUT -->
+    <section class="screen active" id="screen1">
+      <h1 class="screen-title">Patient measurements</h1>
+      <p class="screen-sub">Enter actual weight when available. Length alone will generate a tape-equivalent estimate.</p>
+
+      <div class="field-group">
+        <label class="field-label">Actual weight <span class="opt">— use scale when possible</span></label>
+        <div class="input-row">
+          <input type="number" id="inputWeight" inputmode="decimal" placeholder="e.g. 14.2" step="0.1" min="0">
+          <div class="unit-toggle" id="weightUnitToggle">
+            <button type="button" data-unit="kg" class="active">kg</button>
+            <button type="button" data-unit="lb">lb</button>
+          </div>
+        </div>
+        <div class="helper-note">kg preferred — reduces unit-conversion error at the bedside</div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Length <span class="opt">— optional if weight entered</span></label>
+        <div class="input-row">
+          <input type="number" id="inputLength" inputmode="decimal" placeholder="e.g. 98" step="0.5" min="0">
+          <div class="unit-toggle" id="lengthUnitToggle">
+            <button type="button" data-unit="cm" class="active">cm</button>
+            <button type="button" data-unit="in">in</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Age <span class="opt">— optional, improves plausibility check</span></label>
+        <div class="input-row">
+          <input type="number" id="inputAgeYears" inputmode="decimal" placeholder="years" step="0.1" min="0" style="flex:1">
+          <input type="number" id="inputAgeMonths" inputmode="decimal" placeholder="months (if <2y)" step="1" min="0" style="flex:1">
+        </div>
+      </div>
+
+      <div id="input1Error" class="helper-note warn" style="display:none;"></div>
+    </section>
+
+    <!-- SCREEN 2: WEIGHT DETERMINATION -->
+    <section class="screen" id="screen2">
+      <button class="back-link" onclick="goToScreen(1)">‹ Back to measurements</button>
+      <h1 class="screen-title">Weight determination</h1>
+      <p class="screen-sub">Actual measured weight always governs dosing when available.</p>
+
+      <div id="weightCardsContainer"></div>
+      <div id="divergenceAlertContainer"></div>
+      <div id="zoneDisplayContainer"></div>
+    </section>
+
+    <!-- SCREEN 3: DOSE REFERENCE -->
+    <section class="screen" id="screen3">
+      <button class="back-link" onclick="goToScreen(2)">‹ Back to weight</button>
+      <h1 class="screen-title">Calculated dose reference</h1>
+
+      <div class="category-tabs" id="categoryTabs">
+        <button class="cat-tab active" data-cat="arrest" onclick="switchCategory('arrest')">Arrest / Brady</button>
+        <button class="cat-tab" data-cat="rsi" onclick="switchCategory('rsi')">RSI / Airway</button>
+        <button class="cat-tab" data-cat="crash" onclick="switchCategory('crash')">Crash Support</button>
+      </div>
+
+      <div id="protocolTagContainer"></div>
+
+      <div class="dose-category active" id="catArrest">
+        <div class="section-label">Cardiac arrest</div>
+        <div id="doseCardsArrest"></div>
+
+        <div class="section-label">Bradycardia</div>
+        <div id="doseCardsBrady"></div>
+
+        <div class="section-label">Defibrillation</div>
+        <div id="doseCardsDefib"></div>
+      </div>
+
+      <div class="dose-category" id="catRsi">
+        <div class="alert-box mild" style="margin-bottom:16px;">
+          <div class="alert-head">ⓘ Clinical judgment point</div>
+          Atropine pretreatment before RSI is contested in current literature — some sources describe it as reasonable only in high-risk patients (under 1 year, or receiving succinylcholine), others as generally unnecessary. Follow your institution's airway protocol.
+        </div>
+        <div class="section-label">Pretreatment</div>
+        <div id="doseCardsRsiPretreat"></div>
+
+        <div class="section-label">Induction</div>
+        <div id="doseCardsRsiInduction"></div>
+
+        <div class="section-label">Paralysis</div>
+        <div id="doseCardsRsiParalysis"></div>
+      </div>
+
+      <div class="dose-category" id="catCrash">
+        <div class="alert-box mild" style="margin-bottom:16px;">
+          <div class="alert-head">ⓘ Empiric support, not a diagnosis</div>
+          This section covers common empiric interventions for an acutely decompensating child of unclear etiology. It is not specific to any named syndrome — identify and treat the underlying cause (sepsis, hypoglycemia, cardiac, etc.) per your institution's shock/sepsis protocol.
+        </div>
+        <div class="section-label">Fluid resuscitation</div>
+        <div id="doseCardsCrashFluid"></div>
+
+        <div class="section-label">Empiric dextrose (suspected hypoglycemia)</div>
+        <div id="doseCardsCrashDextrose"></div>
+      </div>
+
+      <div id="adultRangeFlagContainer"></div>
+
+      <div class="verify-banner">⚠ Verify weight and dose before administration</div>
+
+      <div class="confirm-row" onclick="toggleConfirm()">
+        <input type="checkbox" id="confirmCheck" onclick="event.stopPropagation()">
+        <label for="confirmCheck">I have reviewed this weight and these calculated doses against the patient</label>
+      </div>
+
+      <div class="disclaimer-block">
+        <strong>Prototype disclaimer:</strong> Doses shown are calculated from published AHA/AAP 2025 PALS guideline and emergency airway reference values, not an institution-specific protocol. This is a design prototype only — not validated for clinical use, not a substitute for institutional order sets, pharmacist verification, or clinical judgment. A production version would load your facility's P&amp;T-approved dosing protocol rather than these reference defaults.
+        <br><br>
+        <strong>Weight estimation sourcing:</strong> Length-based estimates use published mean measured-weight data per Broselow color zone (peer-reviewed validation study, 2017-edition tape). Estimates beyond the tape's validated range (>146.5 cm) use an age-based formula validated in UK/Australian pediatric populations — this fallback is not an AHA/AAP-endorsed US standard and is offered only as a labeled, secondary estimate pending actual measured weight.
+      </div>
+    </section>
+
+  </main>
+
+  <div class="footer-fixed" id="footerFixed">
+    <button class="primary-btn" id="mainActionBtn" onclick="handleMainAction()">Continue</button>
+  </div>
+
+</div>
+
+<script>
+// ---------- STATE ----------
+let state = {
+  weightUnit: 'kg',
+  lengthUnit: 'cm',
+  weightKg: null,
+  lengthCm: null,
+  ageYears: null,
+};
+let currentScreen = 1;
+
+// ---------- UNIT TOGGLES ----------
+// Switching units converts whatever value is already in the box, so a value
+// typed under the old unit is never silently reinterpreted under the new one.
+document.getElementById('weightUnitToggle').addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const unit = e.target.dataset.unit;
+  if (unit === state.weightUnit) return;
+  const input = document.getElementById('inputWeight');
+  const raw = parseFloat(input.value);
+  if (!isNaN(raw)) {
+    const kgValue = state.weightUnit === 'lb' ? raw * 0.453592 : raw;
+    input.value = Math.round((unit === 'lb' ? kgValue / 0.453592 : kgValue) * 10) / 10;
+  }
+  state.weightUnit = unit;
+  [...e.currentTarget.children].forEach(b => b.classList.toggle('active', b.dataset.unit === unit));
+});
+document.getElementById('lengthUnitToggle').addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const unit = e.target.dataset.unit;
+  if (unit === state.lengthUnit) return;
+  const input = document.getElementById('inputLength');
+  const raw = parseFloat(input.value);
+  if (!isNaN(raw)) {
+    const cmValue = state.lengthUnit === 'in' ? raw * 2.54 : raw;
+    input.value = Math.round((unit === 'in' ? cmValue / 2.54 : cmValue) * 10) / 10;
+  }
+  state.lengthUnit = unit;
+  [...e.currentTarget.children].forEach(b => b.classList.toggle('active', b.dataset.unit === unit));
+});
+
+// ---------- LENGTH->WEIGHT ESTIMATION ----------
+// Zone boundaries and reference weights below reflect published mean MEASURED
+// weight (not the tape's own printed estimate) per color zone from a peer-reviewed
+// validation study of the 2017-edition tape (n=1,160):
+// Kessler et al., "Accuracy of Weight Estimation Using the Broselow Tape in a
+// Peruvian Pediatric Population" — used here as an independently-verified
+// anchor point per zone rather than an assumed/constructed curve.
+// Documented tape range: ~46-146.5 cm, ~3-36 kg (Wikipedia/AAEM-RSA summary of
+// tape specifications). The tape is known to UNDERESTIMATE weight, with the
+// degree of underestimation increasing at higher zones — this is preserved
+// intentionally below rather than smoothed away, and surfaced to the user.
+const TAPE_MAX_LENGTH_CM = 146.5;
+const TAPE_MAX_WEIGHT_KG = 36;
+
+function lengthCmToEstimatedWeightKg(lengthCm) {
+  // [length_cm, measured_mean_weight_kg] anchor points per published zone data
+  const bands = [
+    [46, 3.5], [52, 4.38], [60, 7.56], [67, 8.80], [75, 10.97],
+    [85, 13.84], [98, 17.40], [112, 22.59], [128, 28.40], [TAPE_MAX_LENGTH_CM, 36.71]
+  ];
+  if (lengthCm <= bands[0][0]) return bands[0][1];
+  if (lengthCm > bands[bands.length-1][0]) return null; // beyond tape range — use age-based fallback instead
+  for (let i = 0; i < bands.length - 1; i++) {
+    const [l1, w1] = bands[i];
+    const [l2, w2] = bands[i+1];
+    if (lengthCm >= l1 && lengthCm <= l2) {
+      const frac = (lengthCm - l1) / (l2 - l1);
+      return w1 + frac * (w2 - w1);
+    }
+  }
+  return null;
+}
+
+// ---------- BEYOND-TAPE-RANGE FALLBACK: age-based estimation ----------
+// IMPORTANT SOURCING NOTE: There is no single US-endorsed age-based weight
+// formula. The Luscombe & Owens / "updated APLS" source formula is age-banded
+// (distinct coefficients across sub-ranges of 1-12y); this simplified below
+// applies a single 3×age+7 slope across the whole 1-12y span as a coarse
+// approximation, applied only when a real Broselow tape doesn't reach —
+// it is NOT a verified reproduction of the original age-banded coefficients.
+// It and the "Best Guess" method are validated in UK/Australian pediatric
+// populations, not US-derived, and are NOT AHA/AAP-endorsed. Offered here as
+// a labeled, secondary, evidence-based estimate — never presented as a US
+// guideline standard. Actual measured weight should always be obtained in
+// preference to any age-based estimate, and this fallback should be replaced
+// with an institution's own preferred method (with verified coefficients)
+// during P&T configuration.
+function ageYearsToEstimatedWeightKg(ageYears) {
+  if (ageYears === null || ageYears === undefined) return null;
+  const ageMonths = ageYears * 12;
+  if (ageYears < 1) {
+    // (age in months + 9) / 2
+    return (ageMonths + 9) / 2;
+  } else if (ageYears <= 12) {
+    // Luscombe & Owens / updated APLS formula: 3×age + 7
+    return 3 * ageYears + 7;
+  }
+  return null; // beyond validated age range for this formula
+}
+
+function getColorZone(weightKg) {
+  const zones = [
+    { max: 5, name: 'Grey', color: '#8a8f98', bg: '#eceef0' },
+    { max: 7, name: 'Pink', color: '#c2185b', bg: '#fde5ef' },
+    { max: 9, name: 'Red', color: '#b3261e', bg: '#fdeceb' },
+    { max: 11.5, name: 'Purple', color: '#6a3fa0', bg: '#f0e9f8' },
+    { max: 14.5, name: 'Yellow', color: '#9a7c00', bg: '#fdf6db' },
+    { max: 17.5, name: 'White', color: '#5a6169', bg: '#f2f3f0' },
+    { max: 21, name: 'Blue', color: '#1a5fa8', bg: '#e6f0fa' },
+    { max: 25, name: 'Orange', color: '#c05a1f', bg: '#fdece0' },
+    { max: TAPE_MAX_WEIGHT_KG, name: 'Green', color: '#1e7d4f', bg: '#e5f5ec' },
+    { max: 999, name: 'Beyond validated tape range', color: '#5a6169', bg: '#eceef0' },
+  ];
+  for (const z of zones) if (weightKg <= z.max) return z;
+  return zones[zones.length - 1];
+}
+
+// ---------- SCREEN NAVIGATION ----------
+function goToScreen(n) {
+  currentScreen = n;
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen' + n).classList.add('active');
+  document.querySelectorAll('.step-indicator .dot').forEach(d => {
+    const step = parseInt(d.dataset.step);
+    d.classList.toggle('active', step === n);
+    d.classList.toggle('done', step < n);
+  });
+  const btn = document.getElementById('mainActionBtn');
+  if (n === 1) { btn.textContent = 'Continue'; btn.style.display = 'block'; }
+  if (n === 2) { btn.textContent = 'Continue to dosing'; btn.style.display = 'block'; }
+  if (n === 3) { document.getElementById('footerFixed').style.display = 'none'; }
+  else { document.getElementById('footerFixed').style.display = 'block'; }
+  window.scrollTo(0,0);
+}
+
+function handleMainAction() {
+  if (currentScreen === 1) {
+    if (!validateScreen1()) return;
+    buildWeightScreen();
+    goToScreen(2);
+  } else if (currentScreen === 2) {
+    buildDoseScreen();
+    goToScreen(3);
+  }
+}
+
+function toggleConfirm() {
+  const cb = document.getElementById('confirmCheck');
+  cb.checked = !cb.checked;
+}
+
+// ---------- THEME TOGGLE ----------
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  try { localStorage.setItem('peddose-cc-theme', next); } catch (e) {}
+}
+
+// ---------- VALIDATION ----------
+// Plausible-range bounds (not clinical limits, just guards against fat-finger
+// entry — e.g. a mis-toggled unit or a stray extra digit — reaching the dose math).
+const MIN_PLAUSIBLE_WEIGHT_KG = 0.3;
+const MAX_PLAUSIBLE_WEIGHT_KG = 150;
+const MIN_PLAUSIBLE_LENGTH_CM = 20;
+const MAX_PLAUSIBLE_LENGTH_CM = 200;
+const MAX_PLAUSIBLE_AGE_YEARS = 18;
+
+function validateScreen1() {
+  const wRaw = parseFloat(document.getElementById('inputWeight').value);
+  const lRaw = parseFloat(document.getElementById('inputLength').value);
+  const errEl = document.getElementById('input1Error');
+
+  if (isNaN(wRaw) && isNaN(lRaw)) {
+    errEl.textContent = 'Enter at least a weight or a length to continue.';
+    errEl.style.display = 'block';
+    return false;
+  }
+
+  const weightKgCandidate = isNaN(wRaw) ? null : (state.weightUnit === 'lb' ? wRaw * 0.453592 : wRaw);
+  const lengthCmCandidate = isNaN(lRaw) ? null : (state.lengthUnit === 'in' ? lRaw * 2.54 : lRaw);
+
+  if (weightKgCandidate !== null && (weightKgCandidate < MIN_PLAUSIBLE_WEIGHT_KG || weightKgCandidate > MAX_PLAUSIBLE_WEIGHT_KG)) {
+    errEl.textContent = `Enter a plausible weight (${MIN_PLAUSIBLE_WEIGHT_KG}–${MAX_PLAUSIBLE_WEIGHT_KG} kg). Check the value and the kg/lb toggle.`;
+    errEl.style.display = 'block';
+    return false;
+  }
+  if (lengthCmCandidate !== null && (lengthCmCandidate < MIN_PLAUSIBLE_LENGTH_CM || lengthCmCandidate > MAX_PLAUSIBLE_LENGTH_CM)) {
+    errEl.textContent = `Enter a plausible length (${MIN_PLAUSIBLE_LENGTH_CM}–${MAX_PLAUSIBLE_LENGTH_CM} cm). Check the value and the cm/in toggle.`;
+    errEl.style.display = 'block';
+    return false;
+  }
+
+  const ageY = parseFloat(document.getElementById('inputAgeYears').value);
+  const ageM = parseFloat(document.getElementById('inputAgeMonths').value);
+  const ageYearsCandidate = !isNaN(ageY) ? ageY : (!isNaN(ageM) ? ageM / 12 : null);
+
+  if (ageYearsCandidate !== null && (ageYearsCandidate < 0 || ageYearsCandidate > MAX_PLAUSIBLE_AGE_YEARS)) {
+    errEl.textContent = `Enter a plausible age (0–${MAX_PLAUSIBLE_AGE_YEARS} years).`;
+    errEl.style.display = 'block';
+    return false;
+  }
+
+  errEl.style.display = 'none';
+  state.weightKg = weightKgCandidate;
+  state.lengthCm = lengthCmCandidate;
+  state.ageYears = ageYearsCandidate;
+
+  return true;
+}
+
+// ---------- SCREEN 2: WEIGHT DETERMINATION ----------
+function buildWeightScreen() {
+  const container = document.getElementById('weightCardsContainer');
+  const alertContainer = document.getElementById('divergenceAlertContainer');
+  const zoneContainer = document.getElementById('zoneDisplayContainer');
+  container.innerHTML = '';
+  alertContainer.innerHTML = '';
+  zoneContainer.innerHTML = '';
+
+  const hasWeight = state.weightKg !== null;
+  const hasLength = state.lengthCm !== null;
+  const beyondTapeRange = hasLength && state.lengthCm > TAPE_MAX_LENGTH_CM;
+  const lengthEstKg = hasLength ? lengthCmToEstimatedWeightKg(state.lengthCm) : null;
+  const ageEstKg = state.ageYears !== null ? ageYearsToEstimatedWeightKg(state.ageYears) : null;
+
+  let dosingWeight = null;
+
+  if (hasWeight) {
+    dosingWeight = state.weightKg;
+    container.innerHTML += `
+      <div class="weight-card primary-source">
+        <div class="weight-card-label">Measured weight <span class="badge-primary">DOSING BASIS</span></div>
+        <div class="weight-value">${state.weightKg.toFixed(1)} <span class="unit">kg</span></div>
+      </div>`;
+    if (hasLength && lengthEstKg !== null) {
+      container.innerHTML += `
+        <div class="weight-card">
+          <div class="weight-card-label">Length-predicted weight <span class="badge-estimate">REFERENCE ONLY</span></div>
+          <div class="weight-value">${lengthEstKg.toFixed(1)} <span class="unit">kg (est.)</span></div>
+        </div>`;
+    }
+  } else if (hasLength && beyondTapeRange) {
+    // Length exceeds validated tape range — fall back to age-based estimate if available
+    if (ageEstKg !== null) {
+      dosingWeight = ageEstKg;
+      container.innerHTML += `
+        <div class="weight-card primary-source">
+          <div class="weight-card-label">Estimated weight (age-based) <span class="badge-primary">DOSING BASIS</span></div>
+          <div class="weight-value">${ageEstKg.toFixed(1)} <span class="unit">kg (estimate)</span></div>
+        </div>`;
+      alertContainer.innerHTML += `
+        <div class="alert-box moderate">
+          <div class="alert-head">⚠ Beyond Broselow tape range (>${TAPE_MAX_LENGTH_CM} cm)</div>
+          Length exceeds the validated tape range, so estimation has switched to an age-based formula (3×age+7 for ages 1–12, Luscombe &amp; Owens / "updated APLS" method). This formula is validated in UK/Australian pediatric populations — <strong>it is not an AHA/AAP-endorsed US standard</strong>. Obtain actual measured weight as soon as possible; do not rely on this estimate longer than necessary.
+        </div>`;
+    } else {
+      alertContainer.innerHTML += `
+        <div class="alert-box severe">
+          <div class="alert-head">⛔ Cannot estimate weight</div>
+          Length exceeds the validated Broselow tape range (>${TAPE_MAX_LENGTH_CM} cm) and no age was entered. Enter age for a fallback estimate, or obtain actual measured weight before proceeding.
+        </div>`;
+    }
+  } else if (hasLength && lengthEstKg !== null) {
+    dosingWeight = lengthEstKg;
+    container.innerHTML += `
+      <div class="weight-card primary-source">
+        <div class="weight-card-label">Estimated weight (length-based) <span class="badge-primary">DOSING BASIS</span></div>
+        <div class="weight-value">${lengthEstKg.toFixed(1)} <span class="unit">kg (estimate)</span></div>
+      </div>`;
+    alertContainer.innerHTML += `
+      <div class="alert-box mild">
+        <div class="alert-head">⚠ No measured weight entered</div>
+        This value is a length-based estimate, not a measured weight. Published validation data show the tape tends to <strong>underestimate</strong> actual weight, with the gap widening at longer lengths. Obtain actual weight as soon as feasible.
+      </div>`;
+  }
+
+  // Plausibility check — measured weight vs. age-based expected weight. Kept
+  // deliberately loose (50%) since weight-for-age has wide natural variance;
+  // this is a fat-finger/unit-mixup catch, not a growth-chart judgment.
+  if (hasWeight && ageEstKg !== null) {
+    const agePctDiff = Math.abs(state.weightKg - ageEstKg) / ageEstKg * 100;
+    if (agePctDiff >= 50) {
+      alertContainer.innerHTML += `
+        <div class="alert-box mild">
+          <div class="alert-head">ⓘ Weight atypical for entered age</div>
+          Measured weight differs from a typical weight-for-age estimate (~${ageEstKg.toFixed(1)} kg) by about ${agePctDiff.toFixed(0)}%. This is a rough plausibility check, not a growth chart — double-check the age and weight entries, or this may simply reflect this child's individual growth curve.
+        </div>`;
+    }
+  }
+
+  // Divergence check — only runs when BOTH measured weight and a length-based estimate are present
+  if (hasWeight && hasLength && lengthEstKg !== null && !beyondTapeRange) {
+    const pctDiff = Math.abs(state.weightKg - lengthEstKg) / lengthEstKg * 100;
+    if (pctDiff >= 35) {
+      alertContainer.innerHTML += `
+        <div class="alert-box severe">
+          <div class="alert-head">⛔ Severe divergence — verify before proceeding</div>
+          Measured weight differs from length-predicted weight by ${pctDiff.toFixed(0)}%. This exceeds expected variation for a child this length. Re-check weight entry, confirm units (kg vs lb), and confirm this is the correct patient before proceeding.
+        </div>`;
+    } else if (pctDiff >= 20) {
+      alertContainer.innerHTML += `
+        <div class="alert-box moderate">
+          <div class="alert-head">⚠ Moderate divergence</div>
+          Measured weight differs from length-predicted weight by ${pctDiff.toFixed(0)}%. Double-check the scale reading and unit entry. This may reflect body habitus rather than an error — measured weight will still be used for dosing.
+        </div>`;
+    } else if (pctDiff >= 10) {
+      alertContainer.innerHTML += `
+        <div class="alert-box mild">
+          <div class="alert-head">ⓘ Mild divergence</div>
+          Measured weight differs from length-predicted weight by ${pctDiff.toFixed(0)}%, possibly reflecting body habitus. Measured weight is being used for dosing.
+        </div>`;
+    }
+  }
+
+  if (dosingWeight !== null) {
+    const zone = getColorZone(dosingWeight);
+    zoneContainer.innerHTML = `
+      <div class="weight-card">
+        <div class="weight-card-label">Reference color zone</div>
+        <span class="zone-chip" style="background:${zone.bg}; color:${zone.color};">${zone.name} zone</span>
+      </div>`;
+  }
+
+  state.dosingWeightKg = dosingWeight;
+}
+
+// ---------- SCREEN 3: DOSE REFERENCE (AHA/AAP 2025 PALS) ----------
+const DRUGS_ARREST = [
+  {
+    name: 'Epinephrine',
+    indication: 'Cardiac arrest (all rhythms)',
+    mgPerKg: 0.01,
+    maxMg: 1,
+    concentration: '1:10,000 (0.1 mg/mL)',
+    note: 'Repeat every 3–5 min, IV/IO. Anchor drug for nonshockable arrest — give as early as possible. The 1 mg cap is reached around ~100 kg, so it rarely limits true pediatric dosing but can matter in large adolescents.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8); Marino BS et al., Circulation 2018'
+  },
+  {
+    name: 'Amiodarone',
+    indication: 'VF / pulseless VT',
+    mgPerKg: 5,
+    maxMg: 300,
+    concentration: 'per institutional stock',
+    note: 'Bolus dose for shock-refractory VF/pVT; may repeat up to a cumulative total loading dose of 15 mg/kg across boluses.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8)'
+  },
+  {
+    name: 'Lidocaine',
+    indication: 'VF / pulseless VT (alt. to amiodarone)',
+    mgPerKg: 1,
+    maxMg: 100,
+    concentration: 'per institutional stock',
+    note: 'Use if amiodarone unavailable. Guidance states "adult ceiling applies" without giving a specific mg figure — 100 mg reflects the commonly cited adult single-dose ceiling; confirm against your institutional protocol.',
+    source: 'AHA/AAP 2025 PALS Guidelines; Lasa JJ et al., Circulation 2025 (Part 8)'
+  }
+];
+
+const DRUGS_BRADY = [
+  {
+    name: 'Epinephrine',
+    indication: 'Symptomatic bradycardia, pacing unavailable/ineffective',
+    mgPerKg: 0.01,
+    maxMg: 1,
+    concentration: '1:10,000 (0.1 mL/kg)',
+    note: 'IV/IO. For bradycardia with poor perfusion despite adequate oxygenation/ventilation (heart rate <60/min); hypoxia-driven bradycardia is treated with oxygenation/ventilation first.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8); Marino BS et al., Circulation 2018'
+  },
+  {
+    name: 'Atropine',
+    indication: 'Vagally-mediated bradycardia',
+    mgPerKg: 0.02,
+    maxMg: 0.5,
+    concentration: 'per institutional stock',
+    note: 'Vagolytic — reserved for bradycardia from increased vagal tone or AV block, not hypoxia-driven bradycardia. No minimum dose required per the 2015 AHA update. (A higher single-dose range, 0.6–1.0 mg / up to 2 mg in adolescents, appears in the ACR Manual on Contrast Media for a different indication — contrast-reaction anaphylaxis — and does not apply to this bradycardia/arrest use.)',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8); de Caen AR et al., Pediatrics 2015'
+  }
+];
+
+const DEFIBRILLATION = [
+  {
+    name: 'Defibrillation — first shock',
+    indication: 'Shockable rhythm (VF / pulseless VT)',
+    jPerKg: 2,
+    concentration: 'Biphasic, per device protocol',
+    note: 'If unsuccessful, escalate to 4 J/kg for subsequent shocks.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8)'
+  },
+  {
+    name: 'Defibrillation — subsequent shocks',
+    indication: 'Persistent/recurrent shockable rhythm',
+    jPerKg: 4,
+    concentration: 'Biphasic, per device protocol',
+    note: 'Higher subsequent doses may be considered. Do not exceed 10 J/kg or the adult dose, whichever is lower.',
+    source: 'Lasa JJ et al., Circulation 2025 (Part 8)'
+  }
+];
+
+// ---------- RSI / AIRWAY ----------
+const DRUGS_RSI_PRETREAT = [
+  {
+    name: 'Atropine',
+    indication: 'Pretreatment — blunt bradycardia risk during laryngoscopy/succinylcholine',
+    mgPerKg: 0.02,
+    maxMg: 0.5,
+    concentration: 'per institutional stock',
+    note: 'Contested — see clinical judgment note above. Some sources restrict to age <1y or succinylcholine use. No minimum dose required per the 2015 AHA update.',
+    source: 'Emergency airway pharmacology literature; Lasa JJ et al., Circulation 2025 (Part 8, "may be reasonable" in high-risk patients)'
+  },
+  {
+    name: 'Lidocaine',
+    indication: 'Optional pretreatment — elevated ICP',
+    mgPerKg: 1.5,
+    maxMg: null,
+    concentration: 'per institutional stock',
+    note: 'Give 30 sec–5 min before airway instrumentation if used',
+    source: 'Pediatric RSI review literature'
+  }
+];
+
+const DRUGS_RSI_INDUCTION = [
+  {
+    name: 'Ketamine',
+    indication: 'Induction agent',
+    mgPerKg: 1.5,
+    mgPerKgRange: '1–2 mg/kg',
+    maxMg: null,
+    concentration: 'per institutional stock',
+    note: 'Favorable hemodynamic profile in unstable patients',
+    source: 'Pediatric RSI review literature; UpToDate RSI medications'
+  },
+  {
+    name: 'Etomidate',
+    indication: 'Induction agent',
+    mgPerKg: 0.3,
+    mgPerKgRange: '0.2–0.4 mg/kg',
+    maxMg: 20,
+    concentration: 'per institutional stock',
+    note: 'CAUTION: causes adrenal suppression — relative contraindication in suspected septic shock/adrenal insufficiency. Pediatric dosing data below age 10 is more limited than for older patients; some sources restrict use to age ≥10.',
+    source: 'Pediatric RSI dosing literature; StatPearls Etomidate'
+  }
+];
+
+const DRUGS_RSI_PARALYSIS = [
+  {
+    name: 'Succinylcholine',
+    indication: 'First-line neuromuscular blocker',
+    ageTieredMgPerKg: [
+      { maxAgeYears: 1/12, mgPerKg: 1.8, label: 'neonate <1 month' },
+      { maxAgeYears: 1, mgPerKg: 2.0, label: 'infant 1mo–1y' },
+      { maxAgeYears: 10, mgPerKg: 1.2, label: 'child 1–10y' },
+      { maxAgeYears: 999, mgPerKg: 1.25, label: '>10y' }
+    ],
+    maxMg: null,
+    concentration: 'per institutional stock',
+    note: 'Contraindicated: hyperkalemia risk, crush/burn injury, neuromuscular disease — use rocuronium instead',
+    source: 'Pediatric RSI dosing literature'
+  },
+  {
+    name: 'Rocuronium',
+    indication: 'Alternative paralytic (succinylcholine contraindicated)',
+    mgPerKg: 1.2,
+    maxMg: null,
+    concentration: 'per institutional stock',
+    note: 'Longer duration than succinylcholine — confirm sugammadex availability for failed airway',
+    source: 'Pediatric RSI review literature'
+  }
+];
+
+// ---------- CRASH SUPPORT (empiric, not syndrome-specific) ----------
+const DRUGS_CRASH_FLUID = [
+  {
+    name: 'Isotonic crystalloid bolus',
+    indication: 'Suspected hypovolemia / septic shock — empiric fluid resuscitation',
+    mlPerKg: 10,
+    mlPerKgRange: '10–20 mL/kg per bolus, reassess between boluses',
+    concentration: 'Normal saline or Lactated Ringer\'s per institutional protocol',
+    note: 'Reassess for fluid overload after each bolus, especially in cardiac patients',
+    source: 'AHA/AAP 2025 PALS shock management guidance'
+  }
+];
+
+const DRUGS_CRASH_DEXTROSE = [
+  {
+    name: 'Dextrose (D10 or D25)',
+    indication: 'Suspected/confirmed hypoglycemia',
+    mgPerKgIsDextroseGramsPerKg: 0.5,
+    concentration: 'D10W or D25W per institutional stock and line access',
+    note: 'Check point-of-care glucose first when feasible — treat empirically only if glucose unavailable and clinical suspicion is high',
+    source: 'PALS empiric hypoglycemia management guidance'
+  }
+];
+
+function renderDoseCard(drug, weightKg, ageYears) {
+  const hasAge = ageYears !== null && ageYears !== undefined && !isNaN(ageYears);
+
+  // Age-tiered drugs (e.g., succinylcholine) vary several-fold per kg across
+  // tiers. Guessing a tier when age is unknown risks silently under-dosing a
+  // paralytic, so we require age instead of defaulting to any single tier.
+  if (drug.ageTieredMgPerKg && !hasAge) {
+    const tierRef = drug.ageTieredMgPerKg.map(t => `${t.label}: ${t.mgPerKg} mg/kg`).join(' · ');
+    return `
+      <div class="dose-card">
+        <div class="dose-header"><div class="drug-name">${drug.name}</div></div>
+        <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+        <div class="alert-box moderate" style="margin-bottom:10px;">
+          <div class="alert-head">⚠ Age required to calculate</div>
+          Dose per kg for ${drug.name} varies by age. Enter patient age on the measurements screen to calculate. Reference tiers — ${tierRef}.
+        </div>
+        <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+        <div class="dose-source">Source: ${drug.source}</div>
+      </div>`;
+  }
+
+  // Age-tiered dosing (e.g., succinylcholine) takes precedence over flat mg/kg
+  let effectiveMgPerKg = drug.mgPerKg;
+  let tierLabel = '';
+  if (drug.ageTieredMgPerKg) {
+    const tier = drug.ageTieredMgPerKg.find(t => ageYears <= t.maxAgeYears) || drug.ageTieredMgPerKg[drug.ageTieredMgPerKg.length - 1];
+    effectiveMgPerKg = tier.mgPerKg;
+    tierLabel = ` (${tier.label} tier)`;
+  }
+
+  // Fluid bolus (mL/kg) rendering path
+  if (drug.mlPerKg !== undefined) {
+    const doseMl = drug.mlPerKg * weightKg;
+    return `
+      <div class="dose-card">
+        <div class="dose-header"><div class="drug-name">${drug.name}</div></div>
+        <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+        <div class="dose-formula">${drug.mlPerKg} mL/kg × ${weightKg.toFixed(1)} kg = ${doseMl.toFixed(0)} mL${drug.mlPerKgRange ? ` (typical range: ${drug.mlPerKgRange})` : ''}</div>
+        <div class="dose-result"><span class="dose-amount">${doseMl.toFixed(0)} mL</span></div>
+        <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+        <div class="dose-source">Source: ${drug.source}</div>
+      </div>`;
+  }
+
+  // Defibrillation (J/kg) rendering path
+  if (drug.jPerKg !== undefined) {
+    const doseJ = drug.jPerKg * weightKg;
+    return `
+      <div class="dose-card">
+        <div class="dose-header"><div class="drug-name">${drug.name}</div></div>
+        <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+        <div class="dose-formula">${drug.jPerKg} J/kg × ${weightKg.toFixed(1)} kg = ${doseJ.toFixed(0)} J</div>
+        <div class="dose-result"><span class="dose-amount">${doseJ.toFixed(0)} J</span></div>
+        <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+        <div class="dose-source">Source: ${drug.source}</div>
+      </div>`;
+  }
+
+  // Dextrose (g/kg) rendering path
+  if (drug.mgPerKgIsDextroseGramsPerKg !== undefined) {
+    const doseG = drug.mgPerKgIsDextroseGramsPerKg * weightKg;
+    return `
+      <div class="dose-card">
+        <div class="dose-header"><div class="drug-name">${drug.name}</div></div>
+        <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+        <div class="dose-formula">${drug.mgPerKgIsDextroseGramsPerKg} g/kg × ${weightKg.toFixed(1)} kg = ${doseG.toFixed(1)} g dextrose</div>
+        <div class="dose-result"><span class="dose-amount">${doseG.toFixed(1)} g</span></div>
+        <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+        <div class="dose-source">Source: ${drug.source}</div>
+      </div>`;
+  }
+
+  // Standard mg/kg rendering path (with optional age-tiering)
+  let doseMg = effectiveMgPerKg * weightKg;
+  let capped = false;
+  let flooredToMin = false;
+
+  if (drug.maxMg && doseMg > drug.maxMg) {
+    doseMg = drug.maxMg;
+    capped = true;
+  }
+  if (drug.minMg && doseMg < drug.minMg) {
+    doseMg = drug.minMg;
+    flooredToMin = true;
+  }
+
+  const maxFlag = capped
+    ? `<span class="dose-max-flag">MAX DOSE CAP APPLIED</span>`
+    : (flooredToMin ? `<span class="dose-max-flag">MIN DOSE FLOOR APPLIED</span>` : '');
+
+  return `
+    <div class="dose-card">
+      <div class="dose-header">
+        <div class="drug-name">${drug.name}</div>
+      </div>
+      <div class="indication" style="margin-bottom:8px;">${drug.indication}</div>
+      <div class="dose-formula">${effectiveMgPerKg} mg/kg${tierLabel} × ${weightKg.toFixed(1)} kg = ${(effectiveMgPerKg * weightKg).toFixed(3)} mg${drug.maxMg ? ` (max ${drug.maxMg} mg)` : ''}${drug.minMg ? ` (min ${drug.minMg} mg)` : ''}${drug.mgPerKgRange ? ` — typical range ${drug.mgPerKgRange}` : ''}</div>
+      <div class="dose-result">
+        <span class="dose-amount">${doseMg.toFixed(2)} mg</span>
+        ${maxFlag}
+      </div>
+      <div class="helper-note" style="margin-bottom:8px;">${drug.note} · ${drug.concentration}</div>
+      <div class="dose-source">Source: ${drug.source}</div>
+    </div>`;
+}
+
+// ---------- ADULT-RANGE TRANSITION FLAG ----------
+// PALS applies through 18y / no signs of puberty; there is no universal weight
+// cutoff, so this is a prompt for clinical confirmation, not an automatic
+// protocol switch. Threshold chosen near where PALS max doses (e.g. epi 1mg
+// cap at 100kg-equivalent by weight-based math) converge with adult dosing.
+const ADULT_RANGE_WEIGHT_THRESHOLD_KG = 40;
+
+function buildAdultRangeFlag(weightKg) {
+  if (weightKg === null || weightKg < ADULT_RANGE_WEIGHT_THRESHOLD_KG) return '';
+  return `
+    <div class="adult-range-flag">
+      <div class="alert-head">⚠ Approaching adult dosing range</div>
+      Weight is at or above ${ADULT_RANGE_WEIGHT_THRESHOLD_KG} kg. PALS applies through age 18 (or until signs of puberty, per your institution's definition) — this is a clinical judgment point, not an automatic switch. Confirm whether PALS or adult ACLS protocol applies for this patient before administering.
+    </div>`;
+}
+
+// ---------- CATEGORY TAB SWITCHING ----------
+let currentDoseCategory = 'arrest';
+function switchCategory(cat) {
+  currentDoseCategory = cat;
+  document.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === cat));
+  document.querySelectorAll('.dose-category').forEach(c => c.classList.remove('active'));
+  const map = { arrest: 'catArrest', rsi: 'catRsi', crash: 'catCrash' };
+  document.getElementById(map[cat]).classList.add('active');
+
+  const tagContainer = document.getElementById('protocolTagContainer');
+  const tags = {
+    arrest: 'AHA/AAP 2025 PALS Guidelines (Circulation)',
+    rsi: 'Emergency airway / RSI pharmacology literature',
+    crash: 'PALS shock &amp; empiric support guidance'
+  };
+  tagContainer.innerHTML = `<div class="protocol-tag"><span class="dot"></span> ${tags[cat]}</div>`;
+}
+
+function buildDoseScreen() {
+  const w = state.dosingWeightKg;
+  const age = state.ageYears;
+
+  const containers = {
+    arrestContainer: document.getElementById('doseCardsArrest'),
+    bradyContainer: document.getElementById('doseCardsBrady'),
+    defibContainer: document.getElementById('doseCardsDefib'),
+    rsiPretreat: document.getElementById('doseCardsRsiPretreat'),
+    rsiInduction: document.getElementById('doseCardsRsiInduction'),
+    rsiParalysis: document.getElementById('doseCardsRsiParalysis'),
+    crashFluid: document.getElementById('doseCardsCrashFluid'),
+    crashDextrose: document.getElementById('doseCardsCrashDextrose'),
+  };
+
+  if (w === null) {
+    containers.arrestContainer.innerHTML = '<div class="alert-box severe">No weight available — cannot calculate doses.</div>';
+    Object.values(containers).forEach(c => { if (c !== containers.arrestContainer) c.innerHTML = ''; });
+    document.getElementById('adultRangeFlagContainer').innerHTML = '';
+    switchCategory(currentDoseCategory);
+    return;
+  }
+
+  containers.arrestContainer.innerHTML = DRUGS_ARREST.map(d => renderDoseCard(d, w, age)).join('');
+  containers.bradyContainer.innerHTML = DRUGS_BRADY.map(d => renderDoseCard(d, w, age)).join('');
+  containers.defibContainer.innerHTML = DEFIBRILLATION.map(d => renderDoseCard(d, w, age)).join('');
+  containers.rsiPretreat.innerHTML = DRUGS_RSI_PRETREAT.map(d => renderDoseCard(d, w, age)).join('');
+  containers.rsiInduction.innerHTML = DRUGS_RSI_INDUCTION.map(d => renderDoseCard(d, w, age)).join('');
+  containers.rsiParalysis.innerHTML = DRUGS_RSI_PARALYSIS.map(d => renderDoseCard(d, w, age)).join('');
+  containers.crashFluid.innerHTML = DRUGS_CRASH_FLUID.map(d => renderDoseCard(d, w, age)).join('');
+  containers.crashDextrose.innerHTML = DRUGS_CRASH_DEXTROSE.map(d => renderDoseCard(d, w, age)).join('');
+
+  document.getElementById('adultRangeFlagContainer').innerHTML = buildAdultRangeFlag(w);
+
+  switchCategory(currentDoseCategory);
+}
+
+// ---------- PWA: SERVICE WORKER REGISTRATION ----------
+// Registers the offline cache. After first successful load, the app
+// should continue to function with zero network connectivity.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then((reg) => {
+        console.log('Service worker registered:', reg.scope);
+      })
+      .catch((err) => {
+        console.warn('Service worker registration failed:', err);
+      });
+  });
+}
+</script>
+</body>
+</html>
