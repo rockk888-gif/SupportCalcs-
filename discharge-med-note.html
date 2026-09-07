@@ -143,7 +143,7 @@
       <div class="divider"></div>
       <label>Discharge Medication List Photo/Screenshot</label>
       <div class="drop-zone" id="dropZone" tabindex="0">
-        📷 Click to attach a file, or click here and press Ctrl+V / Cmd+V to paste
+        📷 Click to attach a file, drag & drop an image here, or press Ctrl+V / Cmd+V anywhere on the page to paste
       </div>
       <div class="preview-wrap" id="previewWrap" style="display:none;">
         <img id="previewImg" alt="Medication list preview">
@@ -251,6 +251,11 @@ async function normalizeImage(dataUrl) {
   canvas.width = Math.round(img.naturalWidth * scale);
   canvas.height = Math.round(img.naturalHeight * scale);
   const ctx = canvas.getContext('2d');
+  // Default smoothing quality can noticeably blur small print when
+  // downscaling a medication-list screenshot — ask for the best the
+  // browser can do since legibility of the list matters here.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/png');
 }
@@ -258,6 +263,13 @@ async function normalizeImage(dataUrl) {
 function estimateKb(dataUrl) {
   const base64 = dataUrl.split(',')[1] || '';
   return Math.round((base64.length * 3 / 4) / 1024);
+}
+
+function extensionForDataUrl(dataUrl) {
+  const match = /^data:image\/([a-zA-Z0-9.+-]+);/.exec(dataUrl);
+  const subtype = (match ? match[1] : 'png').toLowerCase();
+  if (subtype === 'jpeg') return 'jpg';
+  return subtype;
 }
 
 function setDefaultDateTime() {
@@ -484,7 +496,11 @@ function handleImageFile(file) {
 }
 
 dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('paste', (e) => {
+
+// Paste is bound to the whole document (not just the drop zone) so
+// Ctrl+V works no matter where focus happens to be. Only image items
+// are intercepted, so pasting text into the note fields is unaffected.
+document.addEventListener('paste', (e) => {
   const items = e.clipboardData?.items;
   if (!items) return;
   for (let i = 0; i < items.length; i++) {
@@ -495,6 +511,23 @@ dropZone.addEventListener('paste', (e) => {
     }
   }
 });
+
+['dragover', 'dragenter'].forEach(evt => {
+  dropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropZone.classList.add('focused');
+  });
+});
+['dragleave', 'dragend'].forEach(evt => {
+  dropZone.addEventListener(evt, () => dropZone.classList.remove('focused'));
+});
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('focused');
+  const file = Array.from(e.dataTransfer?.files || []).find(f => f.type.startsWith('image/'));
+  if (file) handleImageFile(file);
+});
+
 fileInput.addEventListener('change', (e) => handleImageFile(e.target.files[0]));
 clearPhotoBtn.addEventListener('click', () => {
   photoDataUrl = null;
@@ -511,7 +544,7 @@ downloadPhotoBtn.addEventListener('click', () => {
   if (!photoDataUrl) return;
   const a = document.createElement('a');
   a.href = photoDataUrl;
-  a.download = 'discharge-med-list.png';
+  a.download = `discharge-med-list.${extensionForDataUrl(photoDataUrl)}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -567,10 +600,6 @@ function renderNote() {
   } else {
     imageReminder.style.display = 'none';
   }
-}
-
-async function copyImageToClipboard(dataUrl) {
-  return getPngBlob(dataUrl);
 }
 
 copyBtn.addEventListener('click', async () => {
