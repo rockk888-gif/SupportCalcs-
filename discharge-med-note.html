@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Discharge Medication Delivery Note</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #f8fafc;
+    margin: 0;
+    padding: 24px;
+    color: #1e293b;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+  .info-box {
+    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+    padding: 12px 14px; font-size: 13px; color: #1e40af; margin-bottom: 20px; line-height: 1.5;
+  }
+  .info-box strong { color: #1e3a8a; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #334155; }
+  input[type="text"], input[type="datetime-local"], textarea {
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    margin-bottom: 14px;
+  }
+  textarea { resize: vertical; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn-group { display: flex; gap: 8px; margin-bottom: 8px; }
+  .btn-toggle {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .btn-toggle.active { background: #2563eb; color: white; border-color: #2563eb; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .checkbox-row input { width: 16px; height: 16px; }
+  .divider { border-top: 1px solid #f1f5f9; margin: 16px 0; }
+  .drop-zone {
+    border: 2px dashed #cbd5e1;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .drop-zone:hover, .drop-zone.focused { border-color: #60a5fa; color: #3b82f6; }
+  .drop-zone:focus { outline: none; border-color: #60a5fa; }
+  .preview-wrap { position: relative; margin-bottom: 8px; }
+  .preview-wrap img { max-width: 100%; max-height: 220px; border-radius: 8px; border: 1px solid #e2e8f0; display: block; }
+  .preview-actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+  .icon-btn {
+    background: white; border: none; border-radius: 999px;
+    width: 28px; height: 28px; cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    font-size: 14px;
+  }
+  .photo-meta { font-size: 12px; color: #94a3b8; margin: 0 0 8px; }
+  .hint { font-size: 12px; color: #94a3b8; margin-bottom: 14px; }
+  .reset-btn {
+    background: none; border: none; color: #64748b;
+    font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+    padding: 4px 0;
+  }
+  .copy-btn {
+    background: #2563eb; color: white; border: none;
+    padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 600;
+    cursor: pointer;
+  }
+  .copy-btn.copied { background: #16a34a; }
+  .note-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .note-header h2 { font-size: 15px; margin: 0; color: #334155; }
+  .note-box {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+    padding: 14px; white-space: pre-wrap; font-family: "SF Mono", Consolas, monospace;
+    font-size: 13px; min-height: 300px; line-height: 1.5;
+  }
+  .thumb-label { font-size: 12px; font-weight: 600; color: #64748b; margin: 10px 0 6px; }
+  .thumb { max-height: 120px; border-radius: 6px; border: 1px solid #e2e8f0; }
+  .footer-note { font-size: 12px; color: #94a3b8; margin-top: 10px; }
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Discharge Medication Delivery Note</h1>
+  <p class="subtitle">Fill out the form, then copy the note into Cerner. Runs entirely offline in your browser — nothing is saved or transmitted.</p>
+
+  <div class="info-box">
+    <strong>Why text + image never paste together:</strong> Cerner's note editor strips embedded images out of any pasted content that also carries formatted text — a pure image-only paste goes through untouched. That's why this tool copies them in two separate steps below. If your addendum toolbar has its own "Insert Picture" or camera icon (Cerner's native media-embed tool for clinical images), that's the officially supported way to combine both in one place — type the note text, then use that button with a downloaded copy of the image instead of pasting.
+  </div>
+
+  <div class="grid">
+    <!-- FORM -->
+    <div class="card">
+      <div class="row2">
+        <div>
+          <label>Discharge Technician Name</label>
+          <input type="text" id="techName" placeholder="Your name">
+        </div>
+        <div>
+          <label>Date/Time</label>
+          <input type="datetime-local" id="dateTime">
+        </div>
+      </div>
+
+      <label>Medications delivered to</label>
+      <div class="btn-group" id="recipientGroup">
+        <button class="btn-toggle active" data-value="Patient">Patient</button>
+        <button class="btn-toggle" data-value="RN">RN</button>
+        <button class="btn-toggle" data-value="Other">Other</button>
+      </div>
+      <input type="text" id="recipientName" placeholder="Name (if RN or Other)" style="display:none;">
+
+      <div class="divider"></div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="hasPriorMeds">
+        Patient had home meds turned in prior to admission
+      </label>
+
+      <div class="divider"></div>
+      <label>Discharge Medication List Photo/Screenshot</label>
+      <div class="drop-zone" id="dropZone" tabindex="0">
+        📷 Click to attach a file, or click here and press Ctrl+V / Cmd+V to paste
+      </div>
+      <div class="preview-wrap" id="previewWrap" style="display:none;">
+        <img id="previewImg" alt="Medication list preview">
+        <div class="preview-actions">
+          <button class="icon-btn" id="downloadPhoto" title="Download image file">⬇</button>
+          <button class="icon-btn" id="clearPhoto" title="Remove image">✕</button>
+        </div>
+      </div>
+      <p class="photo-meta" id="photoMeta" style="display:none;"></p>
+      <input type="file" id="fileInput" accept="image/*">
+      <p class="hint">Large screenshots are automatically downscaled so clipboard copies are fast and reliable. The image is not embedded in the text note — after copying the note, separately copy/paste this screenshot into Cerner (works reliably from Snipping Tool or this preview image directly), or use the ⬇ button to save it as a file for a native "Insert Picture" tool if your addendum has one.</p>
+
+      <div class="divider"></div>
+      <label>Copy to Cerner (two-step)</label>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <button class="copy-btn" id="copyTextBtn" style="flex:1;">1. Copy Text</button>
+        <button class="copy-btn" id="copyImageBtn" style="flex:1;" disabled>2. Copy Image</button>
+      </div>
+      <p class="hint" id="testStatus">Paste text into Cerner first, click at the end, then click "2. Copy Image" and paste again. (Cerner strips embedded images from rich-text paste, so this two-step method is the reliable path.)</p>
+      <details style="margin-bottom:8px;">
+        <summary style="cursor:pointer; font-size:13px; color:#64748b;">Try combined single paste (usually doesn't carry the image in Cerner)</summary>
+        <button class="copy-btn" id="copyBtn" style="width:100%; margin-top:8px;">📋 Copy for Cerner (single paste)</button>
+      </details>
+      <details style="margin-bottom:8px;">
+        <summary style="cursor:pointer; font-size:13px; color:#64748b;">Try flattened single image (text + photo merged into one picture)</summary>
+        <p class="hint" style="margin-top:8px;">Renders the note text and the med list photo onto one image, then copies it as a single pure image — same clipboard shape as a Snipping Tool screenshot. Note: once flattened, the text is no longer searchable/selectable text in the chart.</p>
+        <button class="copy-btn" id="flattenBtn" style="width:100%;">🖼️ Generate &amp; Copy as Single Image</button>
+        <div id="flattenPreviewWrap" style="display:none; margin-top:10px;">
+          <p class="thumb-label">Preview — review before pasting:</p>
+          <img id="flattenPreviewImg" style="max-width:100%; border-radius:8px; border:1px solid #e2e8f0;">
+        </div>
+      </details>
+      <div id="hiddenImgHolder" style="position:absolute; left:-9999px;"></div>
+
+      <div id="medListSection" style="display:none;">
+        <label>Medication List (type/paste if photo not available)</label>
+        <textarea id="medListText" rows="4" placeholder="e.g.&#10;Metformin 500mg tab, #60&#10;Lisinopril 10mg tab, #30"></textarea>
+      </div>
+
+      <label>Additional notes (optional)</label>
+      <textarea id="notes" rows="2"></textarea>
+
+      <button class="reset-btn" id="resetBtn">↺ Reset form</button>
+    </div>
+
+    <!-- PREVIEW -->
+    <div class="card">
+      <div class="note-header">
+        <h2>Generated Note</h2>
+      </div>
+      <div class="note-box" id="noteBox"></div>
+      <div id="imageReminder" style="display:none;">
+        <p class="thumb-label">ⓘ Remember to separately copy/paste this image after the text:</p>
+        <img class="thumb" id="reminderThumb" alt="Attached medication list">
+      </div>
+      <p class="footer-note">Review for accuracy before pasting into the patient's chart. This file runs entirely offline — no data is saved, stored, or sent anywhere.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+let recipient = "Patient";
+let photoDataUrl = null;
+let photoTaken = false;
+
+const recipientNameInput = document.getElementById('recipientName');
+const techNameInput = document.getElementById('techName');
+const dateTimeInput = document.getElementById('dateTime');
+const hasPriorMedsInput = document.getElementById('hasPriorMeds');
+const medListSection = document.getElementById('medListSection');
+const medListText = document.getElementById('medListText');
+const notesInput = document.getElementById('notes');
+const noteBox = document.getElementById('noteBox');
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const previewWrap = document.getElementById('previewWrap');
+const previewImg = document.getElementById('previewImg');
+const clearPhotoBtn = document.getElementById('clearPhoto');
+const downloadPhotoBtn = document.getElementById('downloadPhoto');
+const photoMeta = document.getElementById('photoMeta');
+const copyBtn = document.getElementById('copyBtn');
+const imageReminder = document.getElementById('imageReminder');
+const reminderThumb = document.getElementById('reminderThumb');
+
+// Screenshots pasted straight from a high-DPI display can be several
+// megabytes as a base64 data URI. Large payloads make clipboard writes
+// slow/flaky and are more likely to get rejected outright by Cerner's
+// paste sanitizer, so downscale before it ever touches the clipboard.
+const MAX_IMAGE_DIMENSION = 1600;
+
+async function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+async function normalizeImage(dataUrl) {
+  const img = await loadImage(dataUrl);
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight));
+  if (scale >= 1) return dataUrl;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
+}
+
+function estimateKb(dataUrl) {
+  const base64 = dataUrl.split(',')[1] || '';
+  return Math.round((base64.length * 3 / 4) / 1024);
+}
+
+function setDefaultDateTime() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  dateTimeInput.value = local.toISOString().slice(0,16);
+}
+setDefaultDateTime();
+
+document.querySelectorAll('#recipientGroup .btn-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#recipientGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    recipient = btn.dataset.value;
+    recipientNameInput.style.display = (recipient === 'RN' || recipient === 'Other') ? 'block' : 'none';
+    recipientNameInput.placeholder = recipient === 'RN' ? 'RN name' : 'Caregiver/other name & relationship';
+    renderNote();
+  });
+});
+
+async function getPngBlob(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/png');
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+const testStatus = document.getElementById('testStatus');
+function setStatus(msg, isError) {
+  testStatus.textContent = msg;
+  testStatus.style.color = isError ? '#dc2626' : '#16a34a';
+}
+
+const copyTextBtn = document.getElementById('copyTextBtn');
+const copyImageBtn = document.getElementById('copyImageBtn');
+
+copyTextBtn.addEventListener('click', async () => {
+  try {
+    const text = generateNote();
+    await navigator.clipboard.writeText(text);
+    setStatus('Text copied. Paste into Cerner now, then click "2. Copy Image".');
+  } catch (err) {
+    setStatus('Text copy failed: ' + err.message, true);
+  }
+});
+
+copyImageBtn.addEventListener('click', async () => {
+  if (!photoDataUrl) { setStatus('Attach an image first.', true); return; }
+  try {
+    const imgBlob = await getPngBlob(photoDataUrl);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': imgBlob })]);
+    setStatus('Image copied. Click at the end of your pasted text in Cerner, then paste again.');
+  } catch (err) {
+    setStatus('Image copy failed: ' + err.message, true);
+  }
+});
+
+async function buildFlattenedImage(text, photoDataUrl) {
+  const width = 900;
+  const padding = 28;
+  const fontSize = 16;
+  const lineHeight = 24;
+  const font = `${fontSize}px "SF Mono", Consolas, monospace`;
+
+  // Measure/wrap text on an offscreen canvas first
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  mctx.font = font;
+  const maxTextWidth = width - padding * 2;
+  const wrappedLines = [];
+  const rawLines = text.split('\n');
+  for (const rawLine of rawLines) {
+    if (rawLine === '') { wrappedLines.push(''); continue; }
+    const words = rawLine.split(' ');
+    let current = '';
+    for (const word of words) {
+      const test = current ? current + ' ' + word : word;
+      if (mctx.measureText(test).width > maxTextWidth && current) {
+        wrappedLines.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
+    }
+    wrappedLines.push(current);
+  }
+
+  const textBlockHeight = wrappedLines.length * lineHeight;
+
+  // Load the photo to get its natural size
+  const img = await loadImage(photoDataUrl);
+  const maxImgWidth = width - padding * 2;
+  const imgScale = Math.min(1, maxImgWidth / img.naturalWidth);
+  const imgDrawWidth = img.naturalWidth * imgScale;
+  const imgDrawHeight = img.naturalHeight * imgScale;
+
+  const gap = 20;
+  const totalHeight = padding + textBlockHeight + gap + imgDrawHeight + padding;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = totalHeight;
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, totalHeight);
+
+  // Text
+  ctx.fillStyle = '#1e293b';
+  ctx.font = font;
+  ctx.textBaseline = 'top';
+  let y = padding;
+  for (const line of wrappedLines) {
+    ctx.fillText(line, padding, y);
+    y += lineHeight;
+  }
+
+  // Image
+  const imgY = padding + textBlockHeight + gap;
+  ctx.drawImage(img, padding, imgY, imgDrawWidth, imgDrawHeight);
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/png');
+  });
+}
+
+const flattenBtn = document.getElementById('flattenBtn');
+const flattenPreviewWrap = document.getElementById('flattenPreviewWrap');
+const flattenPreviewImg = document.getElementById('flattenPreviewImg');
+
+flattenBtn.addEventListener('click', async () => {
+  if (!photoDataUrl) {
+    setStatus('Attach the med list photo first.', true);
+    return;
+  }
+  const originalLabel = flattenBtn.textContent;
+  flattenBtn.textContent = 'Generating...';
+  try {
+    const text = generateNote();
+    const blob = await buildFlattenedImage(text, photoDataUrl);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    const previewUrl = URL.createObjectURL(blob);
+    flattenPreviewImg.src = previewUrl;
+    flattenPreviewWrap.style.display = 'block';
+    flattenBtn.textContent = 'Copied! Paste into Cerner now';
+    setTimeout(() => { flattenBtn.textContent = originalLabel; }, 2500);
+  } catch (err) {
+    flattenBtn.textContent = originalLabel;
+    setStatus('Flatten/copy failed: ' + err.message, true);
+  }
+});
+
+function formatDateTime(val) {
+  if (!val) return "";
+  const d = new Date(val);
+  return d.toLocaleString("en-US", { month: "2-digit", day: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function handleImageFile(file) {
+  if (!file) return;
+  photoTaken = true;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      photoDataUrl = await normalizeImage(ev.target.result);
+    } catch (err) {
+      photoDataUrl = ev.target.result;
+    }
+    previewImg.src = photoDataUrl;
+    previewWrap.style.display = 'block';
+    dropZone.style.display = 'none';
+    medListSection.style.display = 'none';
+    photoMeta.style.display = 'block';
+    photoMeta.textContent = `~${estimateKb(photoDataUrl)} KB after downscaling for clipboard use`;
+    document.getElementById('copyImageBtn').disabled = false;
+    renderNote();
+  };
+  reader.readAsDataURL(file);
+}
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.startsWith('image/')) {
+      handleImageFile(items[i].getAsFile());
+      e.preventDefault();
+      break;
+    }
+  }
+});
+fileInput.addEventListener('change', (e) => handleImageFile(e.target.files[0]));
+clearPhotoBtn.addEventListener('click', () => {
+  photoDataUrl = null;
+  photoTaken = false;
+  previewWrap.style.display = 'none';
+  photoMeta.style.display = 'none';
+  dropZone.style.display = 'block';
+  medListSection.style.display = 'block';
+  fileInput.value = '';
+  document.getElementById('copyImageBtn').disabled = true;
+  renderNote();
+});
+downloadPhotoBtn.addEventListener('click', () => {
+  if (!photoDataUrl) return;
+  const a = document.createElement('a');
+  a.href = photoDataUrl;
+  a.download = 'discharge-med-list.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+
+[techNameInput, dateTimeInput, recipientNameInput, medListText, notesInput].forEach(el => {
+  el.addEventListener('input', renderNote);
+});
+hasPriorMedsInput.addEventListener('change', renderNote);
+
+function generateNote() {
+  const lines = [];
+  lines.push("This note documents the medications filled and dispensed for discharge.");
+  lines.push(`Medications delivered to: ${recipient}${recipientNameInput.value ? ` (${recipientNameInput.value})` : ""}`);
+  lines.push(`${recipient}/caregiver- medication instructions reviewed with ${recipient === "Patient" ? "patient" : recipient.toLowerCase()}/caregiver who verbalized understanding.`);
+  lines.push("");
+  lines.push("For any changes to the medication list, refer to the Discharge Medication Instructions note.");
+  lines.push("");
+  lines.push(`Date/Time: ${formatDateTime(dateTimeInput.value) || "_____"}`);
+  lines.push(`Documented by (Discharge Technician): ${techNameInput.value || "_____"}`);
+  lines.push("");
+
+  if (hasPriorMedsInput.checked) {
+    lines.push("Patient's home medications turned in to Inpatient Pharmacy prior to admission were delivered along with the discharge medications.");
+  } else {
+    lines.push("No medications turned in upon admission.");
+  }
+
+  lines.push("");
+  lines.push(`Discharge Medication List Photo/Screenshot: ${photoTaken ? "See image pasted separately below" : "Not taken"}`);
+
+  if (!photoTaken && medListText.value.trim()) {
+    lines.push("");
+    lines.push("Medication List:");
+    lines.push(medListText.value.trim());
+  }
+
+  if (notesInput.value.trim()) {
+    lines.push("");
+    lines.push("Additional notes:");
+    lines.push(notesInput.value.trim());
+  }
+
+  return lines.join("\n");
+}
+
+function renderNote() {
+  const text = generateNote();
+  noteBox.textContent = text;
+  if (photoTaken && photoDataUrl) {
+    imageReminder.style.display = 'block';
+    reminderThumb.src = photoDataUrl;
+  } else {
+    imageReminder.style.display = 'none';
+  }
+}
+
+async function copyImageToClipboard(dataUrl) {
+  return getPngBlob(dataUrl);
+}
+
+copyBtn.addEventListener('click', async () => {
+  const text = generateNote();
+
+  // If a photo is attached, try a combined text+image clipboard write first
+  if (photoTaken && photoDataUrl) {
+    try {
+      const imgBlob = await getPngBlob(photoDataUrl);
+
+      const escapedText = text
+        .split('\n')
+        .map(line => line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
+        .join('<br>');
+      const htmlContent = `<div>${escapedText}<br><img src="${photoDataUrl}" /><br>&nbsp;<br>&nbsp;</div>`;
+      const htmlBlob = new Blob([htmlContent], { type: 'text/html' });
+      const textBlob = new Blob([text + "\n \n "], { type: 'text/plain' });
+
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': textBlob,
+          'text/html': htmlBlob,
+          'image/png': imgBlob
+        })
+      ]);
+      copyBtn.textContent = 'Copied text + image!';
+      copyBtn.classList.add('copied');
+      setTimeout(() => { copyBtn.textContent = 'Copy for Cerner'; copyBtn.classList.remove('copied'); }, 2000);
+      return;
+    } catch (err) {
+      console.error('Combined copy failed, falling back to text-only:', err);
+      // fall through to text-only below
+    }
+  }
+
+  // Text-only path (no photo, or combined write failed)
+  try {
+    await navigator.clipboard.writeText(text);
+    copyBtn.textContent = 'Copied text!';
+    copyBtn.classList.add('copied');
+    setTimeout(() => { copyBtn.textContent = 'Copy for Cerner'; copyBtn.classList.remove('copied'); }, 2000);
+  } catch (err) {
+    alert('Could not copy automatically. Please select the note text and copy manually (Ctrl+C).');
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  techNameInput.value = '';
+  recipientNameInput.value = '';
+  recipientNameInput.style.display = 'none';
+  hasPriorMedsInput.checked = false;
+  medListText.value = '';
+  notesInput.value = '';
+  photoDataUrl = null;
+  photoTaken = false;
+  previewWrap.style.display = 'none';
+  photoMeta.style.display = 'none';
+  dropZone.style.display = 'block';
+  medListSection.style.display = 'block';
+  fileInput.value = '';
+  document.getElementById('copyImageBtn').disabled = true;
+  recipient = 'Patient';
+  document.querySelectorAll('#recipientGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+  document.querySelector('#recipientGroup .btn-toggle[data-value="Patient"]').classList.add('active');
+  setDefaultDateTime();
+  renderNote();
+});
+
+renderNote();
+</script>
+</body>
+</html>
