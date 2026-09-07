@@ -324,18 +324,27 @@ copyImageBtn.addEventListener('click', async () => {
   }
 });
 
-async function buildFlattenedImage(text, photoDataUrl) {
-  const width = 900;
-  const padding = 28;
-  const fontSize = 16;
-  const lineHeight = 24;
-  const font = `${fontSize}px "SF Mono", Consolas, monospace`;
+// Breaks a single "word" that's wider than maxWidth on its own into
+// character chunks. Without this, a long unbroken token (a run-on med
+// name, a URL, etc.) would just run past the right edge of the canvas
+// and get silently cut off, since fillText doesn't wrap or clip visibly.
+function breakLongWord(ctx, word, maxWidth) {
+  const chunks = [];
+  let current = '';
+  for (const ch of word) {
+    const test = current + ch;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      chunks.push(current);
+      current = ch;
+    } else {
+      current = test;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
 
-  // Measure/wrap text on an offscreen canvas first
-  const measureCanvas = document.createElement('canvas');
-  const mctx = measureCanvas.getContext('2d');
-  mctx.font = font;
-  const maxTextWidth = width - padding * 2;
+function wrapTextLines(ctx, text, maxWidth) {
   const wrappedLines = [];
   const rawLines = text.split('\n');
   for (const rawLine of rawLines) {
@@ -344,15 +353,40 @@ async function buildFlattenedImage(text, photoDataUrl) {
     let current = '';
     for (const word of words) {
       const test = current ? current + ' ' + word : word;
-      if (mctx.measureText(test).width > maxTextWidth && current) {
-        wrappedLines.push(current);
+      if (ctx.measureText(test).width <= maxWidth) {
+        current = test;
+        continue;
+      }
+      if (current) { wrappedLines.push(current); current = ''; }
+      if (ctx.measureText(word).width <= maxWidth) {
         current = word;
       } else {
-        current = test;
+        const chunks = breakLongWord(ctx, word, maxWidth);
+        chunks.slice(0, -1).forEach(chunk => wrappedLines.push(chunk));
+        current = chunks[chunks.length - 1] || '';
       }
     }
     wrappedLines.push(current);
   }
+  return wrappedLines;
+}
+
+async function buildFlattenedImage(text, photoDataUrl) {
+  const width = 900;
+  const padding = 28;
+  const fontSize = 16;
+  const lineHeight = 24;
+  const font = `${fontSize}px "SF Mono", Consolas, monospace`;
+  // Render at 2x so text stays crisp once pasted/zoomed in Cerner instead
+  // of looking like a stretched screenshot.
+  const RENDER_SCALE = 2;
+
+  // Measure/wrap text on an offscreen canvas first
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  mctx.font = font;
+  const maxTextWidth = width - padding * 2;
+  const wrappedLines = wrapTextLines(mctx, text, maxTextWidth);
 
   const textBlockHeight = wrappedLines.length * lineHeight;
 
@@ -367,9 +401,10 @@ async function buildFlattenedImage(text, photoDataUrl) {
   const totalHeight = padding + textBlockHeight + gap + imgDrawHeight + padding;
 
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = totalHeight;
+  canvas.width = width * RENDER_SCALE;
+  canvas.height = totalHeight * RENDER_SCALE;
   const ctx = canvas.getContext('2d');
+  ctx.scale(RENDER_SCALE, RENDER_SCALE);
 
   // Background
   ctx.fillStyle = '#ffffff';
