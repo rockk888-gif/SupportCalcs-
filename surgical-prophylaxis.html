@@ -176,7 +176,14 @@ const PROCEDURES = [
 /* ---------------- STATE ---------------- */
 let state = { step:"category", category:null, procedure:null, allergy:null, reaction:null, prosthesis:null };
 
-function reset(){ state = { step:"category", category:null, procedure:null, allergy:null, reaction:null, prosthesis:null }; render(); }
+function reset(){
+  state = { step:"category", category:null, procedure:null, allergy:null, reaction:null, prosthesis:null };
+  window._patientWeightKg = null;
+  window._patientWeightInputVal = null;
+  window._patientWeightInputUnit = null;
+  window._currentDrugList = null;
+  render();
+}
 function goto(step){ state.step = step; render(); }
 
 /* ---------------- RENDER ---------------- */
@@ -202,7 +209,7 @@ function renderCategory(app){
   const cats = [...new Set(PROCEDURES.map(p=>p.cat))];
   const card = document.createElement('div');
   card.className = "card";
-  card.innerHTML = `<div class="step-label">Step 1 of 3</div><h2>Select procedure category</h2>`;
+  card.innerHTML = `<div class="step-label">Step 1</div><h2>Select procedure category</h2>`;
   cats.forEach(c=>{
     const b = document.createElement('button');
     b.className = "opt"; b.textContent = c;
@@ -216,7 +223,7 @@ function renderProcedure(app){
   const card = document.createElement('div');
   card.className = "card";
   backbar(card, "category");
-  card.innerHTML += `<div class="step-label">Step 2 of 3 \u00b7 ${state.category}</div><h2>Select procedure</h2>`;
+  card.innerHTML += `<div class="step-label">Step 2 \u00b7 ${state.category}</div><h2>Select procedure</h2>`;
   PROCEDURES.filter(p=>p.cat===state.category).forEach(p=>{
     const b = document.createElement('button');
     b.className = "opt";
@@ -236,7 +243,7 @@ function renderAllergyQ(app){
   const card = document.createElement('div');
   card.className = "card";
   backbar(card, "procedure");
-  card.innerHTML += `<div class="step-label">Step 3 of 3 \u00b7 ${state.procedure.name}</div>
+  card.innerHTML += `<div class="step-label">Step 3 \u00b7 ${state.procedure.name}</div>
     <h2>Beta-lactam allergy (penicillin / cephalosporin)?</h2>`;
   const yes = document.createElement('button');
   yes.className="opt"; yes.textContent="Yes \u2014 has a reported beta-lactam allergy";
@@ -252,7 +259,7 @@ function renderReactionQ(app){
   const card = document.createElement('div');
   card.className = "card";
   backbar(card, "allergy");
-  card.innerHTML += `<div class="step-label">Allergy detail</div>
+  card.innerHTML += `<div class="step-label">Step 4 \u00b7 Allergy detail</div>
     <h2>What's the reaction history?</h2>`;
   const opts = [
     {v:"cefazolin-specific", label:"Prior reaction specifically to cefazolin (Ancef)", small:"Avoid cefazolin regardless of severity"},
@@ -284,7 +291,7 @@ function resolveRegimen(){
   }
   if(state.reaction==="mild"){
     return {type:"alt", drugs:p.altBL,
-      rationale:"The guideline's cross-reactivity allowance for a mild reaction is specific to cefazolin, and cefazolin is not the standard agent for this procedure \u2014 use the alternative regimen."};
+      rationale:"The guideline's cross-reactivity allowance for a mild reaction is specific to cefazolin, and cefazolin is not the standard agent for this procedure — use the alternative regimen."};
   }
   if(state.reaction==="severe" || state.reaction==="cefazolin-specific" || state.reaction==="unknown"){
     return {type:"alt", drugs:p.altBL,
@@ -303,6 +310,10 @@ function renderResult(app){
   card.className = "card";
   backbar(card, state.allergy ? "reaction" : "allergy");
   card.innerHTML += `<div class="step-label">Recommendation</div><h2>${state.procedure.name}</h2>`;
+  // Attach immediately: everything below appends onto this already-live node,
+  // so if any later section throws, whatever rendered before it stays visible
+  // instead of the whole result screen disappearing.
+  app.appendChild(card);
 
   const p = state.procedure;
 
@@ -311,7 +322,6 @@ function renderResult(app){
     div.className = "alert info";
     div.innerHTML = "<b>No antimicrobial prophylaxis indicated</b> for this clean procedure per guideline.";
     card.appendChild(div);
-    app.appendChild(card);
     return;
   }
 
@@ -364,9 +374,10 @@ function renderResult(app){
     const d = DRUGS[dkey];
     const line = document.createElement('div');
     line.className = "drugline";
-    line.innerHTML = `<span class="dname">${d.name}</span><span class="ddose">${weightAdjustedDose(d)}</span>`;
+    line.innerHTML = `<span class="dname">${d.name}</span><span class="ddose" id="ddose-${dkey}">${weightAdjustedDose(d)}</span>`;
     box.appendChild(line);
   });
+  window._currentDrugList = drugList;
 
   const timing = drugList.some(k=>DRUGS[k].timing==="extended") ? "120 min" : "60 min";
   const meta = document.createElement('div');
@@ -377,27 +388,43 @@ function renderResult(app){
   card.appendChild(box);
 
   // Weight-based dosing helper for cefazolin / gentamicin
-  const needsWeight = drugList.some(k=>DRUGS[k].weightRule);
-  if(needsWeight){
-    const wCard = document.createElement('div');
-    wCard.className = "weight-input";
-    wCard.innerHTML = `<label for="wtInput">Patient weight</label>
-      <input type="number" id="wtInput" min="0" step="0.1" placeholder="e.g. 82">
-      <select id="wtUnit"><option value="kg">kg</option><option value="lb">lb</option></select>
-      <button class="backbtn" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;" onclick="applyWeight()">Apply</button>`;
-    card.appendChild(wCard);
-    if(drugList.includes("gentamicin")){
-      const ibwNote = document.createElement('div');
-      ibwNote.className = "small-note";
-      ibwNote.innerHTML = "Gentamicin dosing weight: if actual weight is >20% above ideal body weight (IBW), dosing weight = IBW + 0.4 \u00d7 (actual weight \u2212 IBW). Enter actual weight above; calculate IBW separately if needed.";
-      card.appendChild(ibwNote);
+  // Wrapped in try/catch so a failure here can never blank out the
+  // regimen box (drugs/doses/timing) that's already rendered above.
+  try{
+    const needsWeight = drugList.some(k=>DRUGS[k].weightRule);
+    if(needsWeight){
+      const wCard = document.createElement('div');
+      wCard.className = "weight-input";
+      const prevVal = window._patientWeightInputVal || "";
+      const prevUnit = window._patientWeightInputUnit || "kg";
+      wCard.innerHTML = `<label for="wtInput">Patient weight</label>
+        <input type="number" id="wtInput" min="0" step="0.1" placeholder="e.g. 82" value="${prevVal}">
+        <select id="wtUnit">
+          <option value="kg" ${prevUnit==="kg"?"selected":""}>kg</option>
+          <option value="lb" ${prevUnit==="lb"?"selected":""}>lb</option>
+        </select>`;
+      card.appendChild(wCard);
+      setTimeout(()=>{
+        const wtInput = document.getElementById('wtInput');
+        const wtUnit = document.getElementById('wtUnit');
+        if(wtInput) wtInput.addEventListener('input', applyWeight);
+        if(wtUnit) wtUnit.addEventListener('change', applyWeight);
+      },0);
+      if(drugList.includes("gentamicin")){
+        const ibwNote = document.createElement('div');
+        ibwNote.className = "small-note";
+        ibwNote.innerHTML = "Gentamicin dosing weight: if actual weight is >20% above ideal body weight (IBW), dosing weight = IBW + 0.4 \u00d7 (actual weight \u2212 IBW). Enter actual weight above; calculate IBW separately if needed.";
+        card.appendChild(ibwNote);
+      }
+      if(drugList.includes("vancomycin")){
+        const vNote = document.createElement('div');
+        vNote.className = "small-note";
+        vNote.innerHTML = "Vancomycin dosed on actual body weight (no dosing-weight adjustment specified in guideline). Confirm against institutional max single-dose cap and infusion time per pharmacy.";
+        card.appendChild(vNote);
+      }
     }
-    if(drugList.includes("vancomycin")){
-      const vNote = document.createElement('div');
-      vNote.className = "small-note";
-      vNote.innerHTML = "Vancomycin dosed on actual body weight (no dosing-weight adjustment specified in guideline). Confirm against institutional max single-dose cap and infusion time per pharmacy.";
-      card.appendChild(vNote);
-    }
+  } catch(err){
+    console.error("Weight-input section failed to render:", err);
   }
 
   // Dosing detail table (half-life / redose)
@@ -413,18 +440,38 @@ function renderResult(app){
   });
   card.appendChild(detailCard);
 
-  // Live redose timer for the first drug with a numeric redose interval
-  const redoseDrug = drugList.map(k=>DRUGS[k]).find(d=>/^\d/.test(d.redose));
-  if(redoseDrug){
-    const rBox = document.createElement('div');
-    rBox.className = "redose-live";
-    rBox.innerHTML = `<div class="step-label">Redose timing (optional)</div>
-      <div>Preop dose given at: <input type="time" id="doseTime"></div>
-      <div class="redose-result" id="redoseResult"></div>`;
-    card.appendChild(rBox);
-    setTimeout(()=>{
-      document.getElementById('doseTime').addEventListener('change', ()=>calcRedose(redoseDrug));
-    },0);
+  // Live redose timer(s) — one per drug in the regimen that has a numeric redose interval
+  // Also wrapped in try/catch: purely an optional convenience feature, must
+  // never be able to take down the regimen box above it.
+  try{
+    const redoseDrugs = drugList.map(k=>DRUGS[k]).filter(d=>/^\d/.test(d.redose));
+    if(redoseDrugs.length){
+      const rBox = document.createElement('div');
+      rBox.className = "redose-live";
+      let inputsHtml = redoseDrugs.map((d,i)=>
+        `<div style="margin-bottom:${i<redoseDrugs.length-1?'10px':'0'};">
+           <div class="small-note" style="margin-bottom:4px;"><b>${d.name}</b> (q${d.redose})</div>
+           Preop dose given at: <input type="time" id="doseTime-${d.name}">
+           <div class="redose-result" id="redoseResult-${d.name}"></div>
+         </div>`).join("");
+      rBox.innerHTML = `<div class="step-label">Redose timing (optional)</div>${inputsHtml}`;
+      card.appendChild(rBox);
+      setTimeout(()=>{
+        redoseDrugs.forEach(d=>{
+          const el = document.getElementById('doseTime-'+d.name);
+          if(el) el.addEventListener('change', ()=>calcRedose(d));
+        });
+      },0);
+    }
+    if(drugList.some(k=>DRUGS[k].redose.startsWith("N/A")) && redoseDrugs.length){
+      const note = document.createElement('div');
+      note.className = "small-note";
+      note.style.marginTop = "6px";
+      note.textContent = "Other agent(s) in this regimen are single-dose / not routinely redosed intraoperatively — see reference above.";
+      card.appendChild(note);
+    }
+  } catch(err){
+    console.error("Redose-timer section failed to render:", err);
   }
 
   if(state.reaction==="unknown"){
@@ -433,8 +480,6 @@ function renderResult(app){
     div.innerHTML = "Consider confirming allergy details before proceeding, or contact ID PharmD (Hannah Brennan, ext. 67017).";
     card.appendChild(div);
   }
-
-  app.appendChild(card);
 }
 
 function weightAdjustedDose(d){
@@ -457,16 +502,27 @@ function weightAdjustedDose(d){
 }
 
 function applyWeight(){
-  const val = parseFloat(document.getElementById('wtInput').value);
+  const rawVal = document.getElementById('wtInput').value;
   const unit = document.getElementById('wtUnit').value;
+  const val = parseFloat(rawVal);
+  window._patientWeightInputVal = rawVal;
+  window._patientWeightInputUnit = unit;
   if(!val || val<=0){ window._patientWeightKg=null; }
   else { window._patientWeightKg = unit==="lb" ? val*0.453592 : val; }
-  render();
+  updateDoseDisplays();
+}
+
+function updateDoseDisplays(){
+  const drugList = window._currentDrugList || [];
+  drugList.forEach(dkey=>{
+    const el = document.getElementById('ddose-'+dkey);
+    if(el) el.textContent = weightAdjustedDose(DRUGS[dkey]);
+  });
 }
 
 function calcRedose(drug){
-  const t = document.getElementById('doseTime').value;
-  const resEl = document.getElementById('redoseResult');
+  const t = document.getElementById('doseTime-'+drug.name).value;
+  const resEl = document.getElementById('redoseResult-'+drug.name);
   if(!t){ resEl.textContent=""; return; }
   const hrsMatch = drug.redose.match(/(\d+)/);
   if(!hrsMatch){ resEl.textContent="No fixed redose interval for this agent."; return; }
