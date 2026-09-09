@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FHCC Surgical Prophylaxis Tool</title>
+<style>
+  :root{
+    --navy:#0a2540; --navy-light:#13375c; --accent:#0b6e4f; --accent-light:#e6f4ef;
+    --warn:#8a5a00; --warn-bg:#fff4e0; --danger:#8a1f1f; --danger-bg:#fdeaea;
+    --border:#d8dee5; --text:#1c2733; --muted:#5b6b7a; --bg:#f4f6f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); line-height:1.45;
+  }
+  header{
+    background:var(--navy); color:#fff; padding:18px 16px 16px;
+    position:sticky; top:0; z-index:10;
+  }
+  header h1{margin:0; font-size:1.15rem; font-weight:650;}
+  header p{margin:4px 0 0; font-size:0.8rem; color:#c8d6e5;}
+  .wrap{max-width:720px; margin:0 auto; padding:16px;}
+  .card{
+    background:#fff; border:1px solid var(--border); border-radius:10px;
+    padding:16px; margin-bottom:14px;
+  }
+  .card h2{font-size:1rem; margin:0 0 10px; color:var(--navy);}
+  .step-label{font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin-bottom:4px; font-weight:650;}
+  button.opt{
+    display:block; width:100%; text-align:left; padding:12px 14px; margin:6px 0;
+    border:1.5px solid var(--border); border-radius:8px; background:#fff;
+    font-size:0.95rem; color:var(--text); cursor:pointer;
+  }
+  button.opt:active, button.opt.selected{border-color:var(--accent); background:var(--accent-light);}
+  button.opt small{display:block; color:var(--muted); font-size:0.78rem; margin-top:2px; font-weight:400;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+  .backbar{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .backbtn, .resetbtn{
+    background:none; border:none; color:var(--navy-light); font-size:0.85rem;
+    padding:6px 0; cursor:pointer; font-weight:600;
+  }
+  .resetbtn{color:var(--muted);}
+  .pill{
+    display:inline-block; background:var(--accent-light); color:var(--accent);
+    border-radius:20px; padding:2px 10px; font-size:0.72rem; font-weight:650; margin-bottom:8px;
+  }
+  .regimen-box{
+    border:1.5px solid var(--accent); background:var(--accent-light); border-radius:8px;
+    padding:14px; margin-bottom:12px;
+  }
+  .regimen-box.alt{border-color:var(--warn); background:var(--warn-bg);}
+  .regimen-box h3{margin:0 0 6px; font-size:1rem; color:var(--navy);}
+  .drugline{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:8px 0; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:wrap; gap:4px;
+  }
+  .drugline:last-child{border-bottom:none;}
+  .drugline .dname{font-weight:650;}
+  .drugline .ddose{font-size:0.9rem; color:var(--navy-light); text-align:right;}
+  .meta-row{display:flex; gap:14px; flex-wrap:wrap; font-size:0.8rem; color:var(--muted); margin-top:4px;}
+  .meta-row span b{color:var(--text);}
+  .alert{border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:0.9rem;}
+  .alert.info{background:var(--accent-light); border:1px solid var(--accent); color:#0b4a37;}
+  .alert.warn{background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn);}
+  .alert.danger{background:var(--danger-bg); border:1px solid var(--danger); color:var(--danger);}
+  .weight-input{
+    display:flex; align-items:center; gap:8px; margin:10px 0; padding:12px;
+    background:#f4f6f8; border-radius:8px; border:1px solid var(--border);
+  }
+  .weight-input label{font-size:0.85rem; font-weight:600; flex:1;}
+  .weight-input input{
+    width:90px; padding:8px; border:1px solid var(--border); border-radius:6px; font-size:0.95rem;
+  }
+  .weight-input select{padding:8px; border:1px solid var(--border); border-radius:6px; font-size:0.9rem;}
+  footer{
+    max-width:720px; margin:0 auto; padding:6px 16px 32px; font-size:0.75rem; color:var(--muted);
+  }
+  footer .contact{
+    background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-top:6px;
+  }
+  footer .contact b{color:var(--navy);}
+  .redose-live{
+    border:1.5px dashed var(--navy-light); border-radius:8px; padding:12px 14px; margin-top:10px;
+  }
+  .redose-live input[type=time]{padding:8px; border:1px solid var(--border); border-radius:6px; font-size:0.95rem; margin-right:8px;}
+  .redose-result{margin-top:10px; font-weight:650; font-size:0.95rem;}
+  .small-note{font-size:0.78rem; color:var(--muted); margin-top:6px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Surgical Prophylaxis Tool</h1>
+  <p>Captain James A. Lovell FHCC · Adult Antimicrobial Surgical Prophylaxis Guideline (last updated 5/2025)</p>
+</header>
+
+<div class="wrap" id="app"></div>
+
+<footer>
+  <div class="contact">
+    <b>Beta-lactam allergy questions / complex review:</b><br>
+    Infectious Disease PharmD — Hannah Brennan, Ext. 67017 (M–F 0730–1600)
+  </div>
+  <p class="small-note">Reference tool built from FHCC P&T-approved guideline (adapted from ASHP/IDSA/SIS/SHEA/ACS/CDC consensus, customized with local susceptibilities). Not a substitute for clinical judgment or pharmacist consultation on complex cases. Offline, self-contained — no data leaves this device.</p>
+</footer>
+
+<script>
+/* ---------------- DATA MODEL ---------------- */
+
+// Drug reference: dosing / PK / timing rules
+const DRUGS = {
+  cefazolin: {
+    name:"Cefazolin", timing:"standard",
+    doseText:"2 g (weight <120 kg) or 3 g (weight \u2265120 kg)",
+    weightRule:"cefazolin",
+    halfLife:"1.2\u20132.2 hr", redose:"4 hr"
+  },
+  cefoxitin: {
+    name:"Cefoxitin", timing:"standard",
+    doseText:"2 g", halfLife:"0.7\u20131.1 hr", redose:"2 hr"
+  },
+  cefuroxime: {
+    name:"Cefuroxime", timing:"standard",
+    doseText:"1.5 g", halfLife:"1\u20132 hr", redose:"4 hr"
+  },
+  metronidazole: {
+    name:"Metronidazole", timing:"standard",
+    doseText:"500 mg", halfLife:"6\u20138 hr", redose:"N/A (single dose typical)"
+  },
+  vancomycin: {
+    name:"Vancomycin", timing:"extended",
+    doseText:"15 mg/kg", weightRule:"vancomycin",
+    halfLife:"4\u20138 hr", redose:"N/A (single dose typical)"
+  },
+  gentamicin: {
+    name:"Gentamicin", timing:"standard",
+    doseText:"5 mg/kg based on dosing weight (single dose)",
+    weightRule:"gentamicin",
+    halfLife:"2\u20133 hr", redose:"N/A \u2014 limit to single preop dose"
+  },
+  clindamycin: {
+    name:"Clindamycin", timing:"standard",
+    doseText:"900 mg", halfLife:"2.4 hr", redose:"6 hr"
+  },
+  levofloxacin: {
+    name:"Levofloxacin", timing:"extended",
+    doseText:"500 mg", halfLife:"6\u20138 hr", redose:"N/A (single dose typical)"
+  }
+};
+
+// Procedure list, grouped by category
+// standard = recommended agent(s) with no beta-lactam allergy
+// altBL = alternative agent(s) if beta-lactam allergic
+const PROCEDURES = [
+  {cat:"GI", name:"Appendectomy (uncomplicated)", standard:["cefoxitin"], altBL:["levofloxacin","metronidazole"]},
+  {cat:"GI", name:"Biliary Tract", standard:["cefoxitin"], altBL:["levofloxacin","metronidazole"]},
+  {cat:"GI", name:"Gastroduodenal", standard:["cefazolin"], altBL:["vancomycin"]},
+  {cat:"GI", name:"Laparoscopic (elective, high risk)", standard:["cefoxitin"], altBL:["levofloxacin","metronidazole"]},
+  {cat:"GI", name:"Small Intestine \u2014 obstructed / colorectal", standard:["cefoxitin"], altBL:["levofloxacin","metronidazole"]},
+  {cat:"GI", name:"Small Intestine \u2014 non-obstructed / hernia repair", standard:["cefazolin"], altBL:["vancomycin"]},
+  {cat:"Gynecological", name:"Hysterectomy / oncologic (not entering bowel)", standard:["cefazolin"], altBL:["vancomycin","gentamicin"]},
+  {cat:"Head and Neck", name:"Clean", standard:[], altBL:[], noneNeeded:true},
+  {cat:"Head and Neck", name:"Clean w/ prosthesis placement", standard:["cefazolin"], altBL:["clindamycin"]},
+  {cat:"Head and Neck", name:"Clean-contaminated", standard:["cefazolin","metronidazole"], altBL:["clindamycin"]},
+  {cat:"Orthopedic", name:"Clean \u2014 hand, knee, or foot", standard:[], altBL:[], noneNeeded:true},
+  {cat:"Orthopedic", name:"Hip fracture repair / internal fixation / total joint replacement", standard:["cefazolin"], altBL:["vancomycin"]},
+  {cat:"Urologic", name:"Lower tract instrumentation w/ risk factors (incl. transrectal prostate biopsy)", standard:["levofloxacin"], altBL:["levofloxacin"], note:"Same agent regardless of beta-lactam allergy status."},
+  {cat:"Urologic", name:"Clean, without entry into urinary tract", standard:["cefazolin"], altBL:["vancomycin"], prosthesisAdd:"gentamicin"},
+  {cat:"Urologic", name:"Clean, with entry into urinary tract", standard:["cefazolin"], altBL:["levofloxacin"], prosthesisAdd:"gentamicin", prosthesisAppliesToStandardOnly:true},
+  {cat:"Urologic", name:"Clean-contaminated", standard:["cefoxitin"], altBL:["levofloxacin","metronidazole"]},
+  {cat:"Vascular", name:"Vascular procedures", standard:["cefazolin"], altBL:["vancomycin"]}
+];
+
+/* ---------------- STATE ---------------- */
+let state = { step:"category", category:null, procedure:null, allergy:null, reaction:null, prosthesis:null };
+
+function reset(){ state = { step:"category", category:null, procedure:null, allergy:null, reaction:null, prosthesis:null }; render(); }
+function goto(step){ state.step = step; render(); }
+
+/* ---------------- RENDER ---------------- */
+function render(){
+  const app = document.getElementById('app');
+  app.innerHTML = "";
+  if(state.step==="category") return renderCategory(app);
+  if(state.step==="procedure") return renderProcedure(app);
+  if(state.step==="allergy") return renderAllergyQ(app);
+  if(state.step==="reaction") return renderReactionQ(app);
+  if(state.step==="result") return renderResult(app);
+}
+
+function backbar(container, backStep, label){
+  const bar = document.createElement('div');
+  bar.className = "backbar";
+  bar.innerHTML = `<button class="backbtn" onclick="goto('${backStep}')">\u2190 Back</button>
+                    <button class="resetbtn" onclick="reset()">Start over</button>`;
+  container.appendChild(bar);
+}
+
+function renderCategory(app){
+  const cats = [...new Set(PROCEDURES.map(p=>p.cat))];
+  const card = document.createElement('div');
+  card.className = "card";
+  card.innerHTML = `<div class="step-label">Step 1 of 3</div><h2>Select procedure category</h2>`;
+  cats.forEach(c=>{
+    const b = document.createElement('button');
+    b.className = "opt"; b.textContent = c;
+    b.onclick = ()=>{ state.category=c; state.step="procedure"; render(); };
+    card.appendChild(b);
+  });
+  app.appendChild(card);
+}
+
+function renderProcedure(app){
+  const card = document.createElement('div');
+  card.className = "card";
+  backbar(card, "category");
+  card.innerHTML += `<div class="step-label">Step 2 of 3 \u00b7 ${state.category}</div><h2>Select procedure</h2>`;
+  PROCEDURES.filter(p=>p.cat===state.category).forEach(p=>{
+    const b = document.createElement('button');
+    b.className = "opt";
+    b.innerHTML = p.name + (p.noneNeeded ? "<small>No prophylaxis indicated</small>" : "");
+    b.onclick = ()=>{
+      state.procedure = p;
+      if(p.noneNeeded){ state.step="result"; }
+      else { state.step="allergy"; }
+      render();
+    };
+    card.appendChild(b);
+  });
+  app.appendChild(card);
+}
+
+function renderAllergyQ(app){
+  const card = document.createElement('div');
+  card.className = "card";
+  backbar(card, "procedure");
+  card.innerHTML += `<div class="step-label">Step 3 of 3 \u00b7 ${state.procedure.name}</div>
+    <h2>Beta-lactam allergy (penicillin / cephalosporin)?</h2>`;
+  const yes = document.createElement('button');
+  yes.className="opt"; yes.textContent="Yes \u2014 has a reported beta-lactam allergy";
+  yes.onclick=()=>{ state.allergy=true; state.step="reaction"; render(); };
+  const no = document.createElement('button');
+  no.className="opt"; no.textContent="No known beta-lactam allergy";
+  no.onclick=()=>{ state.allergy=false; state.step="result"; render(); };
+  card.appendChild(yes); card.appendChild(no);
+  app.appendChild(card);
+}
+
+function renderReactionQ(app){
+  const card = document.createElement('div');
+  card.className = "card";
+  backbar(card, "allergy");
+  card.innerHTML += `<div class="step-label">Allergy detail</div>
+    <h2>What's the reaction history?</h2>`;
+  const opts = [
+    {v:"cefazolin-specific", label:"Prior reaction specifically to cefazolin (Ancef)", small:"Avoid cefazolin regardless of severity"},
+    {v:"severe", label:"Severe reaction (anaphylaxis, angioedema, Stevens-Johnson, etc.)", small:"To a different penicillin/cephalosporin"},
+    {v:"mild", label:"Mild/non-severe reaction (rash, hives, GI upset)", small:"To a different penicillin/cephalosporin"},
+    {v:"unknown", label:"Reaction history unclear / patient unsure", small:""}
+  ];
+  opts.forEach(o=>{
+    const b = document.createElement('button');
+    b.className="opt";
+    b.innerHTML = o.label + (o.small?`<small>${o.small}</small>`:"");
+    b.onclick=()=>{ state.reaction=o.v; state.step="result"; render(); };
+    card.appendChild(b);
+  });
+  app.appendChild(card);
+}
+
+/* Decide final regimen based on state */
+function resolveRegimen(){
+  const p = state.procedure;
+  if(p.noneNeeded) return {type:"none"};
+
+  if(!state.allergy) return {type:"standard", drugs:p.standard};
+
+  // allergic
+  if(state.reaction==="mild" && p.standard.includes("cefazolin")){
+    return {type:"cefazolin-ok", drugs:p.standard,
+      rationale:"Cefazolin does not share a side chain with other beta-lactams, so cross-reactivity is rare. For a mild/non-severe reaction to a different penicillin or cephalosporin (and no prior reaction to cefazolin itself), cefazolin is generally still considered appropriate."};
+  }
+  if(state.reaction==="mild"){
+    return {type:"alt", drugs:p.altBL,
+      rationale:"The guideline's cross-reactivity allowance for a mild reaction is specific to cefazolin, and cefazolin is not the standard agent for this procedure \u2014 use the alternative regimen."};
+  }
+  if(state.reaction==="severe" || state.reaction==="cefazolin-specific" || state.reaction==="unknown"){
+    return {type:"alt", drugs:p.altBL,
+      rationale: state.reaction==="cefazolin-specific"
+        ? "Prior reaction to cefazolin itself \u2014 use the alternative regimen."
+        : state.reaction==="severe"
+        ? "Severe reaction history \u2014 use the alternative regimen rather than cefazolin."
+        : "Reaction history unclear \u2014 defaulting to the alternative regimen. Confirm with ID PharmD or the patient's allergy record when possible."
+    };
+  }
+  return {type:"alt", drugs:p.altBL};
+}
+
+function renderResult(app){
+  const card = document.createElement('div');
+  card.className = "card";
+  backbar(card, state.allergy ? "reaction" : "allergy");
+  card.innerHTML += `<div class="step-label">Recommendation</div><h2>${state.procedure.name}</h2>`;
+
+  const p = state.procedure;
+
+  if(p.noneNeeded){
+    const div = document.createElement('div');
+    div.className = "alert info";
+    div.innerHTML = "<b>No antimicrobial prophylaxis indicated</b> for this clean procedure per guideline.";
+    card.appendChild(div);
+    app.appendChild(card);
+    return;
+  }
+
+  const res = resolveRegimen();
+
+  if(res.rationale){
+    const div = document.createElement('div');
+    div.className = "alert " + (res.type==="cefazolin-ok" ? "info" : "warn");
+    div.textContent = res.rationale;
+    card.appendChild(div);
+  }
+
+  if(p.note){
+    const div = document.createElement('div');
+    div.className = "alert info";
+    div.textContent = p.note;
+    card.appendChild(div);
+  }
+
+  // stewardship note when alt includes both vanc and clinda is not simultaneous here,
+  // but flag when clindamycin chosen as the alt (vs vancomycin preferred)
+  if(res.drugs && res.drugs.includes("clindamycin")){
+    const div = document.createElement('div');
+    div.className = "alert warn";
+    div.innerHTML = "<b>Stewardship note:</b> per 2024 hospital antibiogram, only 79% of MSSA isolates were susceptible to clindamycin vs. 100% to vancomycin. Vancomycin is preferred when practical for beta-lactam-allergic patients.";
+    card.appendChild(div);
+  }
+
+  // Regimen box
+  const box = document.createElement('div');
+  box.className = "regimen-box" + (res.type==="alt" || res.type==="cefazolin-ok" ? " alt" : "");
+  const pillLabel = res.type==="standard" ? "Recommended regimen" :
+                     res.type==="cefazolin-ok" ? "Cefazolin \u2014 likely still appropriate" :
+                     "Alternative regimen (beta-lactam allergy)";
+  box.innerHTML = `<span class="pill">${pillLabel}</span>`;
+
+  let drugList = [...res.drugs];
+  // handle prosthesis add-on for urologic clean w/o entry, and clean w/ entry (standard only)
+  if(p.prosthesisAdd){
+    if(!(p.prosthesisAppliesToStandardOnly && res.type!=="standard")){
+      const note = document.createElement('div');
+      note.className="small-note";
+      note.style.marginBottom="8px";
+      note.textContent = `+ ${DRUGS[p.prosthesisAdd].name} if procedure involves an implanted prosthesis`;
+      box.appendChild(note);
+    }
+  }
+
+  drugList.forEach(dkey=>{
+    const d = DRUGS[dkey];
+    const line = document.createElement('div');
+    line.className = "drugline";
+    line.innerHTML = `<span class="dname">${d.name}</span><span class="ddose">${weightAdjustedDose(d)}</span>`;
+    box.appendChild(line);
+  });
+
+  const timing = drugList.some(k=>DRUGS[k].timing==="extended") ? "120 min" : "60 min";
+  const meta = document.createElement('div');
+  meta.className = "meta-row";
+  meta.innerHTML = `<span><b>Give within:</b> ${timing} before incision</span>`;
+  box.appendChild(meta);
+
+  card.appendChild(box);
+
+  // Weight-based dosing helper for cefazolin / gentamicin
+  const needsWeight = drugList.some(k=>DRUGS[k].weightRule);
+  if(needsWeight){
+    const wCard = document.createElement('div');
+    wCard.className = "weight-input";
+    wCard.innerHTML = `<label for="wtInput">Patient weight</label>
+      <input type="number" id="wtInput" min="0" step="0.1" placeholder="e.g. 82">
+      <select id="wtUnit"><option value="kg">kg</option><option value="lb">lb</option></select>
+      <button class="backbtn" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;" onclick="applyWeight()">Apply</button>`;
+    card.appendChild(wCard);
+    if(drugList.includes("gentamicin")){
+      const ibwNote = document.createElement('div');
+      ibwNote.className = "small-note";
+      ibwNote.innerHTML = "Gentamicin dosing weight: if actual weight is >20% above ideal body weight (IBW), dosing weight = IBW + 0.4 \u00d7 (actual weight \u2212 IBW). Enter actual weight above; calculate IBW separately if needed.";
+      card.appendChild(ibwNote);
+    }
+    if(drugList.includes("vancomycin")){
+      const vNote = document.createElement('div');
+      vNote.className = "small-note";
+      vNote.innerHTML = "Vancomycin dosed on actual body weight (no dosing-weight adjustment specified in guideline). Confirm against institutional max single-dose cap and infusion time per pharmacy.";
+      card.appendChild(vNote);
+    }
+  }
+
+  // Dosing detail table (half-life / redose)
+  const detailCard = document.createElement('div');
+  detailCard.innerHTML = `<div class="step-label" style="margin-top:4px;">Redosing reference</div>`;
+  drugList.forEach(dkey=>{
+    const d = DRUGS[dkey];
+    const row = document.createElement('div');
+    row.className = "meta-row";
+    row.style.marginBottom="6px";
+    row.innerHTML = `<span><b>${d.name}</b></span><span>Half-life: ${d.halfLife}</span><span>Redose q${d.redose}</span>`;
+    detailCard.appendChild(row);
+  });
+  card.appendChild(detailCard);
+
+  // Live redose timer for the first drug with a numeric redose interval
+  const redoseDrug = drugList.map(k=>DRUGS[k]).find(d=>/^\d/.test(d.redose));
+  if(redoseDrug){
+    const rBox = document.createElement('div');
+    rBox.className = "redose-live";
+    rBox.innerHTML = `<div class="step-label">Redose timing (optional)</div>
+      <div>Preop dose given at: <input type="time" id="doseTime"></div>
+      <div class="redose-result" id="redoseResult"></div>`;
+    card.appendChild(rBox);
+    setTimeout(()=>{
+      document.getElementById('doseTime').addEventListener('change', ()=>calcRedose(redoseDrug));
+    },0);
+  }
+
+  if(state.reaction==="unknown"){
+    const div = document.createElement('div');
+    div.className = "alert warn";
+    div.innerHTML = "Consider confirming allergy details before proceeding, or contact ID PharmD (Hannah Brennan, ext. 67017).";
+    card.appendChild(div);
+  }
+
+  app.appendChild(card);
+}
+
+function weightAdjustedDose(d){
+  if(d.weightRule==="cefazolin"){
+    const wt = window._patientWeightKg;
+    if(wt){ return wt>=120 ? "3 g (weight \u2265120 kg)" : "2 g (weight <120 kg)"; }
+    return d.doseText;
+  }
+  if(d.weightRule==="gentamicin"){
+    const wt = window._patientWeightKg;
+    if(wt){ return (wt*5).toFixed(0) + " mg (5 mg/kg \u00d7 " + wt + " kg dosing weight, single dose)"; }
+    return d.doseText;
+  }
+  if(d.weightRule==="vancomycin"){
+    const wt = window._patientWeightKg;
+    if(wt){ return (wt*15).toFixed(0) + " mg (15 mg/kg \u00d7 " + wt.toFixed(1) + " kg actual body weight)"; }
+    return d.doseText;
+  }
+  return d.doseText;
+}
+
+function applyWeight(){
+  const val = parseFloat(document.getElementById('wtInput').value);
+  const unit = document.getElementById('wtUnit').value;
+  if(!val || val<=0){ window._patientWeightKg=null; }
+  else { window._patientWeightKg = unit==="lb" ? val*0.453592 : val; }
+  render();
+}
+
+function calcRedose(drug){
+  const t = document.getElementById('doseTime').value;
+  const resEl = document.getElementById('redoseResult');
+  if(!t){ resEl.textContent=""; return; }
+  const hrsMatch = drug.redose.match(/(\d+)/);
+  if(!hrsMatch){ resEl.textContent="No fixed redose interval for this agent."; return; }
+  const hrs = parseInt(hrsMatch[1]);
+  const [h,m] = t.split(':').map(Number);
+  const doseDate = new Date(); doseDate.setHours(h,m,0,0);
+  const redoseDate = new Date(doseDate.getTime() + hrs*3600*1000);
+  const fmt = d => d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  resEl.innerHTML = `Redose ${drug.name} at approximately <b>${fmt(redoseDate)}</b> if procedure ongoing (q${hrs}hr from initiation of preop dose).`;
+}
+
+render();
+</script>
+</body>
+</html>
