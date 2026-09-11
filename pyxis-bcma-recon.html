@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pyxis / BCMA Drug Tracking &amp; Reconciliation Report</title>
+<style>
+  :root {
+    --red: #dc2626; --red-bg: #fef2f2; --red-border: #fecaca;
+    --amber: #d97706; --amber-bg: #fffbeb; --amber-border: #fde68a;
+    --teal: #0d9488; --teal-bg: #f0fdfa; --teal-border: #99f6e4;
+    --blue: #2563eb; --blue-bg: #eff6ff; --blue-border: #bfdbfe;
+    --green: #16a34a; --green-bg: #f0fdf4; --green-border: #bbf7d0;
+    --slate: #475569; --slate-bg: #f8fafc; --slate-border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 0; background: #f1f5f9; color: #1e293b;
+  }
+  .app { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0 0 4px 0; }
+  .subtitle { color: #64748b; font-size: 13px; }
+
+  .toolbar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 16px; padding: 12px; background: white; border-radius: 10px;
+    border: 1px solid #e2e8f0; position: relative; z-index: 10;
+  }
+  button {
+    background: #1e293b; color: white; border: none; padding: 8px 14px;
+    border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button:hover { background: #334155; }
+  button.secondary { background: white; color: #1e293b; border: 1px solid #cbd5e1; }
+  button.secondary:hover { background: #f8fafc; }
+  input[type="text"] {
+    padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;
+    flex: 1; min-width: 200px;
+  }
+  select { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; background: white; }
+
+  .toggle-group { display: flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+  .toggle-btn {
+    background: white; color: #475569; border: none; padding: 8px 14px; font-size: 13px;
+    cursor: pointer; font-weight: 500; border-right: 1px solid #cbd5e1;
+  }
+  .toggle-btn:last-child { border-right: none; }
+  .toggle-btn:hover { background: #f8fafc; }
+  .toggle-btn.active-toggle { background: #1e293b; color: white; }
+  .toggle-btn.active-toggle:hover { background: #1e293b; }
+
+  .multiselect { position: relative; display: inline-block; }
+  .multiselect-btn {
+    padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;
+    background: white; cursor: pointer; min-width: 180px; text-align: left;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .multiselect-btn:hover { background: #f8fafc; }
+  .multiselect-panel {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+    background: white; border: 1px solid #cbd5e1; border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 8px; min-width: 300px;
+    max-height: 280px; overflow-y: auto; display: none;
+  }
+  .multiselect-panel.open { display: block; }
+  .multiselect-option {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+    font-size: 12.5px; cursor: pointer;
+  }
+  .multiselect-option:hover { background: #f1f5f9; }
+  .multiselect-option input { margin: 0; }
+  .multiselect-actions { display: flex; gap: 10px; padding: 4px 8px 8px 8px; border-bottom: 1px solid #f1f5f9; margin-bottom: 4px; }
+  .multiselect-actions a { font-size: 11px; color: #2563eb; cursor: pointer; text-decoration: underline; }
+  .multiselect-search { width: 100%; padding: 6px 8px; margin-bottom: 6px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12.5px; }
+
+  .dropzone-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 800px) { .dropzone-row { grid-template-columns: 1fr; } }
+  .dz-title { font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
+
+  #dropzone, #pyxisDropzone {
+    border: 2px dashed #94a3b8; border-radius: 12px; padding: 40px 20px;
+    text-align: center; background: white; color: #64748b; margin-bottom: 0;
+    transition: all 0.15s; cursor: pointer;
+  }
+  #dropzone.dragover, #pyxisDropzone.dragover { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
+  #dropzone .icon, #pyxisDropzone .icon { font-size: 32px; margin-bottom: 8px; }
+  #dropzone .hint, #pyxisDropzone .hint { font-size: 12px; margin-top: 6px; color: #94a3b8; }
+  #dropzone.has-data, #pyxisDropzone.has-data { padding: 14px 20px; text-align: left; display: flex; align-items: center; justify-content: space-between; cursor: default; }
+
+  .callout {
+    display: flex; gap: 10px; padding: 12px 14px; border-radius: 10px;
+    border: 2px solid; margin-bottom: 12px; font-size: 13px; line-height: 1.5;
+  }
+  .callout.slate { background: var(--slate-bg); border-color: var(--slate-border); color: #334155; }
+  .callout.teal { background: var(--teal-bg); border-color: var(--teal-border); color: #115e59; }
+  .callout.blue { background: var(--blue-bg); border-color: var(--blue-border); color: #1e3a8a; }
+  .callout.emerald { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .callout b { font-weight: 700; }
+
+  .cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px; margin-bottom: 20px;
+  }
+  .card {
+    border-radius: 10px; border: 2px solid; padding: 12px; cursor: pointer;
+    background: white; transition: box-shadow 0.15s;
+  }
+  .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .card.active { box-shadow: 0 0 0 2px #475569; }
+  .card .num { font-size: 22px; font-weight: 800; float: right; }
+  .card .lbl { font-size: 11px; font-weight: 600; margin-top: 20px; line-height: 1.3; }
+  .card.red { border-color: var(--red-border); background: var(--red-bg); } .card.red .num { color: var(--red); }
+  .card.amber { border-color: var(--amber-border); background: var(--amber-bg); } .card.amber .num { color: var(--amber); }
+  .card.slate2 { border-color: #cbd5e1; background: #f1f5f9; } .card.slate2 .num { color: #475569; }
+  .card.teal { border-color: var(--teal-border); background: var(--teal-bg); } .card.teal .num { color: var(--teal); }
+  .card.green { border-color: var(--green-border); background: var(--green-bg); } .card.green .num { color: var(--green); }
+  .card.blue { border-color: var(--blue-border); background: var(--blue-bg); } .card.blue .num { color: var(--blue); }
+
+  section { background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 18px; margin-bottom: 18px; }
+  section h2 { font-size: 15px; margin: 0 0 12px 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; padding: 8px 10px; background: #f8fafc; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; white-space: nowrap; cursor: pointer; }
+  th:hover { background: #f1f5f9; }
+  td { padding: 7px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  tr.row-red { background: var(--red-bg); }
+  tr.row-amber { background: var(--amber-bg); }
+  tr.row-teal { background: var(--teal-bg); }
+  tr.row-slate { background: #f1f5f9; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .badge.red { background: #fee2e2; color: #991b1b; }
+  .badge.amber { background: #fef3c7; color: #92400e; }
+  .badge.teal { background: #ccfbf1; color: #0f766e; }
+  .badge.slate { background: #e2e8f0; color: #334155; }
+  .badge.green { background: #dcfce7; color: #166534; }
+  .badge.blue { background: #dbeafe; color: #1e40af; }
+
+  .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 11.5px; }
+  .center { text-align: center; }
+  .muted { color: #94a3b8; }
+
+  .detail-row td { background: #fafbfc; padding: 12px 20px; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; font-size: 12px; }
+  .detail-grid .field-label { font-weight: 600; color: #475569; margin-bottom: 2px; }
+  .detail-grid .field-value { color: #1e293b; }
+
+  .med-table td, .med-table th { text-align: right; }
+  .med-table td:first-child, .med-table th:first-child { text-align: left; }
+
+  footer { text-align: center; color: #94a3b8; font-size: 11px; margin: 20px 0; }
+
+  @media print {
+    body { background: white; }
+    .app { max-width: none; padding: 8px; }
+    .toolbar, #dropzone, #pyxisDropzone, .dropzone-row, button, .no-print { display: none !important; }
+    section { border: 1px solid #ccc; box-shadow: none; break-inside: avoid; page-break-inside: avoid; margin-bottom: 12px; }
+    .cards { break-inside: avoid; }
+    table { font-size: 10px; }
+    .detail-row { display: table-row !important; }
+    tr, td, th { break-inside: avoid; }
+    h1 { font-size: 18px; }
+    a[href]:after { content: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Pyxis / BCMA Drug Tracking &amp; Reconciliation Report</h1>
+    <div class="subtitle">BCMA device dispense/return and charge/credit activity, cross-checked against Pyxis cabinet pulls and other transaction types — any formulary drug, filterable to a watch list</div>
+  </header>
+
+  <div class="dropzone-row">
+    <div>
+      <div class="dz-title">1. BCMA Reconciliation Export (FIN-level dispense/charge/return/credit data)</div>
+      <div id="dropzone">
+        <div class="icon">📄</div>
+        <div><b>Drag and drop</b> a BCMA reconciliation Excel/CSV export here</div>
+        <div class="hint">Expected columns: FIN, ADM_ID, PATIENT_NAME, EVENT_TYPE, EVENT_DT_TM, NDC, ASSIGNED_PRODUCT, NURSE_UNIT, FACILITY, ORDER_ID, EDIPI/MRN</div>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none">
+      </div>
+    </div>
+    <div>
+      <div class="dz-title">2. Pyxis "All Device Event Report" (pulls, returns, waste, restock, etc.)</div>
+      <div id="pyxisDropzone">
+        <div class="icon">🛡️</div>
+        <div><b>Drag and drop</b> a Pyxis device event report here</div>
+        <div class="hint">The standard "All Device Events Report" export grouped by patient, with Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns</div>
+        <input type="file" id="pyxisFileInput" accept=".xlsx,.xls" style="display:none">
+      </div>
+    </div>
+  </div>
+
+  <div class="toolbar no-print" id="toolbar" style="display:none;">
+    <input type="text" id="search" placeholder="Search FIN, ADM ID, patient, or drug...">
+    <select id="unitFilter"><option value="All">All Units</option></select>
+    <div class="multiselect">
+      <button class="multiselect-btn" id="productFilterBtn" type="button">
+        <span id="productFilterLabel">All Drugs</span><span>▾</span>
+      </button>
+      <div class="multiselect-panel" id="productFilterPanel">
+        <div class="multiselect-actions">
+          <a id="productSelectAll">Select all</a>
+          <a id="productSelectNone">Clear</a>
+        </div>
+        <input type="text" class="multiselect-search" id="productSearch" placeholder="Filter drug list...">
+        <div id="productOptionsList"></div>
+      </div>
+    </div>
+    <div class="toggle-group">
+      <button type="button" id="showAllBtn" class="toggle-btn active-toggle">Show All</button>
+      <button type="button" id="showUnresolvedBtn" class="toggle-btn">Show Unresolved Only</button>
+    </div>
+    <button class="secondary" id="clearFilter">Clear Filter</button>
+    <button id="printBtn">🖨️ Print / Save as PDF</button>
+  </div>
+
+  <div id="statusCallouts"></div>
+
+  <div id="emptyState" style="text-align:center; padding:40px 20px; color:#94a3b8; background:white; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:20px;">
+    <div style="font-size:28px; margin-bottom:8px;">👆</div>
+    <div style="font-size:14px;">Drop your BCMA reconciliation export above to get started. The Pyxis report is optional and can be added anytime for verification.</div>
+  </div>
+
+  <div id="mainContent" style="display:none;">
+    <div class="cards" id="cards"></div>
+
+    <section>
+      <h2>Drug Totals — Dispensed, Charged, Returned, Credited</h2>
+      <table class="med-table" id="medTable"></table>
+    </section>
+
+    <section>
+      <h2 id="unaccountedTitle">Not Accounted For</h2>
+      <table id="unaccountedTable"></table>
+    </section>
+
+    <section>
+      <h2 id="detailTitle">Full FIN-Level Detail</h2>
+      <div id="resolutionSummary" style="margin-bottom:12px;"></div>
+      <div style="overflow-x:auto;">
+        <table id="detailTable"></table>
+      </div>
+    </section>
+  </div>
+
+  <footer>Generated report — data processed entirely in-browser, nothing uploaded to any server.</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+// ============ DATA (loaded fresh each session via drag & drop — nothing embedded) ============
+let REPORT = [];
+
+const STATUS_META = {
+  'Missing Charge(s)': {cls:'red', order:0},
+  'No Dispense on File': {cls:'amber', order:1},
+  'Extra Charge / Review': {cls:'red', order:2},
+  'No Activity (Fully Returned/Credited)': {cls:'slate', order:3},
+  'Resolved (Cross-FIN Match)': {cls:'teal', order:4},
+  'Balanced': {cls:'green', order:5},
+  'Balanced (NDC Mismatch)': {cls:'blue', order:6}
+};
+const UNRESOLVED_STATUSES = new Set(['Missing Charge(s)', 'No Dispense on File', 'Extra Charge / Review']);
+
+// BCMA device-side event types mapped to the Pyxis transaction type(s) that should
+// corroborate them. Adjust this map if your facility's Pyxis vocabulary differs
+// (e.g. some configs log "Waste" instead of "Return", or use "Restock"/"Load").
+const PYXIS_EXPECTED = {
+  'Device Dispense': ['remove'],
+  'Device Return': ['return', 'restock', 'waste']
+};
+
+let state = { search: '', unit: 'All', products: null, productSearch: '', statusFilter: 'All', sortField: 'status', sortDir: 'asc', expanded: new Set(), showUnresolvedOnly: false };
+let PYXIS_TXNS = null;
+
+function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+function dateOnly(dtStr) {
+  if (!dtStr) return null;
+  const d = new Date(dtStr);
+  if (isNaN(d)) return null;
+  return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+}
+
+function normText(s) { return (s||'').toString().toLowerCase().replace(/[^a-z0-9]/g, ''); }
+
+// Order-insensitive name key so "Alice Smith" (common BCMA format) and "Smith, Alice"
+// (common Pyxis format) still match for the patient+day fallback lookup.
+function normName(s) {
+  return (s||'').toString().toLowerCase().replace(/[^a-z0-9\s,]/g, '').split(/[\s,]+/).filter(Boolean).sort().join('|');
+}
+
+function scopedByProduct() {
+  return state.products === null ? REPORT : REPORT.filter(r => state.products.has(r.product));
+}
+
+function computeMedSummary(data) {
+  const byProduct = {};
+  data.forEach(r => {
+    if (!byProduct[r.product]) byProduct[r.product] = {dispensed:0, charged:0, returned:0, credited:0};
+    byProduct[r.product].dispensed += r.rawDispense;
+    byProduct[r.product].charged += r.rawCharge;
+    byProduct[r.product].returned += r.returns;
+    byProduct[r.product].credited += r.credits;
+  });
+  return Object.entries(byProduct).map(([product, v]) => ({
+    product, ...v, netDispensed: v.dispensed - v.returned, netCharged: v.charged - v.credited
+  }));
+}
+
+function render() {
+  const hasData = REPORT.length > 0;
+  document.getElementById('emptyState').style.display = hasData ? 'none' : 'block';
+  document.getElementById('mainContent').style.display = hasData ? 'block' : 'none';
+  document.getElementById('toolbar').style.display = hasData ? 'flex' : 'none';
+  if (!hasData) { renderCallouts(); return; }
+  populateProductFilter();
+  renderCallouts();
+  renderCards();
+  renderMedTable();
+  renderUnaccounted();
+  renderDetailTable();
+  populateUnitFilter();
+}
+
+function renderCallouts() {
+  if (REPORT.length === 0) {
+    document.getElementById('statusCallouts').innerHTML = '';
+    return;
+  }
+  document.getElementById('statusCallouts').innerHTML = `
+    <div class="callout slate"><span>🔄</span><div><b>Netting rule:</b> A Device Return offsets one Device Dispense, and a Credit on Administration offsets one Charge, within the same FIN. Counts below reflect raw and net values.</div></div>
+    <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two (or more) FINs for the same patient, same day — rescheduling, registration changes, or an appointment mishap. Dispense/charge pairs are matched by patient identity + date rather than left as open gaps, and are labeled <b>Resolved (Cross-FIN Match)</b>.</div></div>
+    <div class="callout blue"><span>🧪</span><div><b>NDC crosswalk:</b> Where dispense and charge counts match but NDCs differ, it's flagged as <b>Balanced (NDC Mismatch)</b> — the pairing is complete, but pharmacy/billing should confirm whether the NDC difference is an expected package-to-billing-unit mapping.</div></div>
+    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, matched by FIN + same-day activity + drug identity (NDC or product name vs. Pyxis Med ID). When a patient has more than one FIN on the same day, the check falls back to patient + same-day + drug match and the row detail notes which basis confirmed it. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = the drug/FIN isn't covered by the Pyxis file. <b>Discrepancy</b> = Pyxis data exists for this patient/day but doesn't confirm the event. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
+  `;
+}
+
+function renderCards() {
+  const scoped = scopedByProduct();
+  const counts = {};
+  Object.keys(STATUS_META).forEach(s => counts[s] = 0);
+  scoped.forEach(r => counts[r.status] = (counts[r.status]||0) + 1);
+  const clsMap = {red:'red', amber:'amber', slate:'slate2', teal:'teal', green:'green', blue:'blue'};
+  const cardsHtml = Object.entries(STATUS_META).sort((a,b)=>a[1].order-b[1].order).map(([status, meta]) => {
+    const active = state.statusFilter === status ? 'active' : '';
+    return `<div class="card ${clsMap[meta.cls]} ${active}" data-status="${escapeHtml(status)}">
+      <div class="num">${counts[status]||0}</div>
+      <div class="lbl">${escapeHtml(status)}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('cards').innerHTML = cardsHtml;
+  document.querySelectorAll('.card').forEach(c => c.addEventListener('click', () => {
+    const s = c.getAttribute('data-status');
+    state.statusFilter = state.statusFilter === s ? 'All' : s;
+    renderCards(); renderDetailTable();
+  }));
+}
+
+function renderMedTable() {
+  const summary = computeMedSummary(scopedByProduct());
+  let rows = summary.map(m => {
+    const gap = m.netDispensed - m.netCharged;
+    const gapStr = gap === 0 ? '<span class="badge green">0</span>' : (gap > 0 ? `<span class="badge red">+${gap}</span>` : `<span class="badge blue">${gap}</span>`);
+    return `<tr>
+      <td>${escapeHtml(m.product)}</td>
+      <td>${m.dispensed}</td>
+      <td>${m.returned}</td>
+      <td><b>${m.netDispensed}</b></td>
+      <td>${m.charged}</td>
+      <td>${m.credited}</td>
+      <td><b>${m.netCharged}</b></td>
+      <td>${gapStr}</td>
+    </tr>`;
+  }).join('');
+  if (summary.length === 0) {
+    rows = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#94a3b8;">No drugs selected.</td></tr>';
+  } else {
+    const totalD = summary.reduce((a,m)=>a+m.dispensed,0), totalR = summary.reduce((a,m)=>a+m.returned,0);
+    const totalND = summary.reduce((a,m)=>a+m.netDispensed,0), totalC = summary.reduce((a,m)=>a+m.charged,0);
+    const totalCr = summary.reduce((a,m)=>a+m.credited,0), totalNC = summary.reduce((a,m)=>a+m.netCharged,0);
+    const totalGap = totalND - totalNC;
+    rows += `<tr style="font-weight:700; border-top:2px solid #cbd5e1;">
+      <td>TOTAL</td><td>${totalD}</td><td>${totalR}</td><td>${totalND}</td>
+      <td>${totalC}</td><td>${totalCr}</td><td>${totalNC}</td>
+      <td>${totalGap===0?'<span class="badge green">0</span>':(totalGap>0?`<span class="badge red">+${totalGap}</span>`:`<span class="badge blue">${totalGap}</span>`)}</td>
+    </tr>`;
+  }
+  document.getElementById('medTable').innerHTML = `
+    <thead><tr><th>Drug</th><th>Dispensed</th><th>Returned</th><th>Net Dispensed</th><th>Charged</th><th>Credited</th><th>Net Charged</th><th>Gap</th></tr></thead>
+    <tbody>${rows}</tbody>`;
+}
+
+function renderUnaccounted() {
+  const unresolved = scopedByProduct().filter(r => !r.linkedFin && r.netDispense !== r.netCharge && r.status !== 'No Activity (Fully Returned/Credited)');
+  document.getElementById('unaccountedTitle').textContent = `Not Accounted For (${unresolved.length} FIN${unresolved.length===1?'':'s'})`;
+  if (unresolved.length === 0) {
+    document.getElementById('unaccountedTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ Nothing unaccounted for — every FIN is explained.</td></tr></tbody>';
+    return;
+  }
+  const rows = unresolved.map(r => {
+    const gap = r.netDispense - r.netCharge;
+    const gapLabel = gap > 0 ? `Dispensed ${gap} more than charged` : `Charged ${Math.abs(gap)} more than dispensed`;
+    const badgeCls = gap > 0 ? 'red' : 'amber';
+    return `<tr class="row-${badgeCls === 'amber' ? 'amber' : 'red'}">
+      <td class="mono">${escapeHtml(r.fin)}</td>
+      <td>${escapeHtml(r.patient)}</td>
+      <td>${escapeHtml(r.unit)}</td>
+      <td>${escapeHtml(r.product)}</td>
+      <td class="center">${r.netDispense}</td>
+      <td class="center">${r.netCharge}</td>
+      <td><span class="badge ${badgeCls}">${gapLabel}</span></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('unaccountedTable').innerHTML = `
+    <thead><tr><th>FIN</th><th>Patient</th><th>Unit</th><th>Drug</th><th class="center">Net Disp.</th><th class="center">Net Chg.</th><th>Gap</th></tr></thead>
+    <tbody>${rows}</tbody>`;
+}
+
+function populateUnitFilter() {
+  const sel = document.getElementById('unitFilter');
+  const current = sel.value;
+  const units = ['All', ...new Set(REPORT.map(r => r.unit))].sort((a,b)=> a==='All'?-1:b==='All'?1:a.localeCompare(b));
+  sel.innerHTML = units.map(u => `<option value="${escapeHtml(u)}">${u==='All'?'All Units':escapeHtml(u)}</option>`).join('');
+  sel.value = units.includes(current) ? current : 'All';
+}
+
+function populateProductFilter() {
+  const products = [...new Set(REPORT.map(r => r.product))].sort();
+  if (state.products === null) state.products = new Set(products);
+
+  const q = state.productSearch.trim().toLowerCase();
+  const visible = q ? products.filter(p => p.toLowerCase().includes(q)) : products;
+
+  const list = document.getElementById('productOptionsList');
+  list.innerHTML = visible.map(p => `
+    <label class="multiselect-option">
+      <input type="checkbox" value="${escapeHtml(p)}" ${state.products.has(p) ? 'checked' : ''}>
+      <span>${escapeHtml(p)}</span>
+    </label>`).join('') || '<div class="muted" style="padding:6px 8px;">No drugs match.</div>';
+
+  list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.products.add(cb.value);
+      else state.products.delete(cb.value);
+      updateProductLabel(products);
+      renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
+    });
+  });
+
+  updateProductLabel(products);
+}
+
+function updateProductLabel(allProducts) {
+  const label = document.getElementById('productFilterLabel');
+  const n = state.products.size;
+  if (n === 0) label.textContent = 'No drugs selected';
+  else if (n === allProducts.length) label.textContent = 'All Drugs';
+  else if (n === 1) { const only = [...state.products][0]; label.textContent = only.length > 28 ? only.slice(0,26)+'…' : only; }
+  else label.textContent = `${n} drugs selected`;
+}
+
+function filteredSorted() {
+  let rows = REPORT.filter(r => {
+    const s = state.search.toLowerCase();
+    const matchesSearch = !s || r.fin.includes(s) || r.admIds.toLowerCase().includes(s) ||
+      r.patient.toLowerCase().includes(s) || r.product.toLowerCase().includes(s);
+    const matchesUnit = state.unit === 'All' || r.unit === state.unit;
+    const matchesProduct = state.products === null || state.products.has(r.product);
+    const matchesStatus = state.statusFilter === 'All' || r.status === state.statusFilter;
+    const matchesResolved = !state.showUnresolvedOnly || UNRESOLVED_STATUSES.has(r.status);
+    return matchesSearch && matchesUnit && matchesProduct && matchesStatus && matchesResolved;
+  });
+  rows = rows.slice().sort((a,b) => {
+    let av, bv;
+    if (state.sortField === 'status') { av = STATUS_META[a.status].order; bv = STATUS_META[b.status].order; }
+    else { av = a[state.sortField]; bv = b[state.sortField]; }
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av < bv) return state.sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return state.sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  return rows;
+}
+
+function renderResolutionSummary() {
+  const scoped = scopedByProduct();
+  const resolved = scoped.filter(r => !UNRESOLVED_STATUSES.has(r.status)).length;
+  const unresolved = scoped.filter(r => UNRESOLVED_STATUSES.has(r.status)).length;
+  const total = scoped.length;
+  const pct = total > 0 ? Math.round((resolved/total)*100) : 0;
+  document.getElementById('resolutionSummary').innerHTML = `
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; font-size:13px;">
+      <div><span class="badge green">${resolved} resolved</span></div>
+      <div><span class="badge red">${unresolved} unresolved</span></div>
+      <div class="muted">${pct}% of ${total} FIN${total===1?'':'s'} fully explained</div>
+    </div>`;
+  document.getElementById('detailTitle').textContent = state.showUnresolvedOnly
+    ? `Full FIN-Level Detail — Unresolved Only (${unresolved})`
+    : 'Full FIN-Level Detail';
+}
+
+function pyxisCheckLine(label, check) {
+  if (!check) return '';
+  const basisNote = check.basis ? ` <span class="muted">(matched by ${check.basis})</span>` : '';
+  return `${label}: <b>${escapeHtml(check.status)}</b>${basisNote}<br>`;
+}
+
+function renderDetailTable() {
+  renderResolutionSummary();
+  const rows = filteredSorted();
+  const arrow = (f) => state.sortField===f ? (state.sortDir==='asc'?' ▲':' ▼') : '';
+  let body = rows.map(r => {
+    const meta = STATUS_META[r.status];
+    const rowCls = meta.cls === 'red' ? 'row-red' : meta.cls === 'amber' ? 'row-amber' : meta.cls === 'teal' ? 'row-teal' : meta.cls === 'slate' ? 'row-slate' : '';
+    const isExpanded = state.expanded.has(r.fin);
+    const ndcApplicable = r.dispenseNdcs && r.chargeNdcs;
+    const ndcIcon = !ndcApplicable ? '<span class="muted">n/a</span>' : (r.ndcMatch ? '✅' : '🧪');
+    const pStatus = r.pyxisStatus || 'N/A';
+    const pyxisIcon = pStatus === 'Verified' ? '🛡️' : pStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : (pStatus.indexOf('Partial') === 0 ? '<span class="badge amber">◐</span>' : '<span class="muted">—</span>');
+    let html = `<tr class="${rowCls}" style="cursor:pointer" data-fin="${escapeHtml(r.fin)}">
+      <td class="mono">${escapeHtml(r.fin)}</td>
+      <td class="mono muted">${escapeHtml(r.admIds)}</td>
+      <td>${escapeHtml(r.patient)}</td>
+      <td>${escapeHtml(r.unit)}</td>
+      <td class="center">${r.rawDispense}${r.returns>0?` <span class="muted">→ ${r.netDispense}</span>`:''}</td>
+      <td class="center">${r.rawCharge}${r.credits>0?` <span class="muted">→ ${r.netCharge}</span>`:''}</td>
+      <td class="center">${ndcIcon}</td>
+      <td class="center">${pyxisIcon}</td>
+      <td><span class="badge ${meta.cls === 'slate' ? 'slate' : meta.cls}">${escapeHtml(r.status)}</span></td>
+      <td class="center no-print">${isExpanded?'▲':'▼'}</td>
+    </tr>`;
+    if (isExpanded) {
+      const pyxisDetail = (r.pyxisDispenseCheck || r.pyxisReturnCheck)
+        ? pyxisCheckLine('Dispense vs. Pyxis Remove', r.pyxisDispenseCheck) + pyxisCheckLine('Return vs. Pyxis Return/Restock/Waste', r.pyxisReturnCheck)
+        : (PYXIS_TXNS ? 'No device dispense/return on this FIN to verify.' : 'No Pyxis file loaded.');
+      html += `<tr class="detail-row"><td colspan="10">
+        <div class="detail-grid">
+          <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.product)}</div></div>
+          <div><div class="field-label">Facility</div><div class="field-value">${escapeHtml(r.facility)}</div></div>
+          <div style="grid-column: 1 / -1;"><div class="field-label">Pyxis Verification</div><div class="field-value">${pyxisDetail}</div></div>
+          <div><div class="field-label">Dispense NDC(s)</div><div class="field-value mono">${escapeHtml(r.dispenseNdcs)||'—'}</div></div>
+          <div><div class="field-label">Charge NDC(s)</div><div class="field-value mono">${escapeHtml(r.chargeNdcs)||'—'}</div></div>
+          <div><div class="field-label">Dispense Date(s)</div><div class="field-value">${escapeHtml(r.dispenseDates)||'—'}</div></div>
+          <div><div class="field-label">Charge Date(s)</div><div class="field-value">${escapeHtml(r.chargeDates)||'—'}</div></div>
+          ${r.linkedFin ? `<div><div class="field-label">Linked FIN</div><div class="field-value mono" style="color:#0d9488; font-weight:600;">${escapeHtml(r.linkedFin)}</div></div>` : ''}
+          <div style="grid-column: 1 / -1;"><div class="field-label">Order ID(s)</div><div class="field-value mono">${escapeHtml(r.orderIds)}</div></div>
+        </div>
+      </td></tr>`;
+    }
+    return html;
+  }).join('');
+
+  document.getElementById('detailTable').innerHTML = `
+    <thead><tr>
+      <th data-sort="fin">FIN${arrow('fin')}</th>
+      <th data-sort="admIds">ADM ID${arrow('admIds')}</th>
+      <th data-sort="patient">Patient${arrow('patient')}</th>
+      <th data-sort="unit">Unit${arrow('unit')}</th>
+      <th class="center">Disp (raw→net)</th>
+      <th class="center">Chg (raw→net)</th>
+      <th class="center">NDC</th>
+      <th class="center">Pyxis</th>
+      <th data-sort="status">Status${arrow('status')}</th>
+      <th class="no-print"></th>
+    </tr></thead>
+    <tbody>${body || '<tr><td colspan="10" style="text-align:center; padding:20px; color:#94a3b8;">No FINs match your filters.</td></tr>'}</tbody>
+  `;
+
+  document.querySelectorAll('#detailTable th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const f = th.getAttribute('data-sort');
+      if (state.sortField === f) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      else { state.sortField = f; state.sortDir = 'asc'; }
+      renderDetailTable();
+    });
+  });
+  document.querySelectorAll('#detailTable tbody tr[data-fin]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const fin = tr.getAttribute('data-fin');
+      if (state.expanded.has(fin)) state.expanded.delete(fin); else state.expanded.add(fin);
+      renderDetailTable();
+    });
+  });
+}
+
+// ============ PYXIS FILE PARSING ============
+function parsePyxisWorkbook(workbook) {
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: false });
+
+  let headerRowIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const joined = row.map(c => (c||'').toString().trim());
+    if (joined.includes('Med ID') && joined.includes('Transaction Type') && joined.includes('ID')) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+  if (headerRowIdx === -1) throw new Error('Could not find the header row (expected columns like "Med ID", "Transaction Type", "ID"). Is this a Pyxis All Device Event Report?');
+
+  const colIdx = {};
+  rows[headerRowIdx].forEach((h, i) => { if (h) colIdx[h.toString().trim()] = i; });
+  const required = ['Med ID', 'Transaction Type', 'Transaction Date/Time', 'ID'];
+  const missing = required.filter(c => !(c in colIdx));
+  if (missing.length) throw new Error('Missing expected columns in Pyxis file: ' + missing.join(', '));
+
+  let currentPatient = null;
+  const txns = [];
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const patientName = row[0] ? row[0].toString().trim() : '';
+    const medId = row[colIdx['Med ID']];
+    const finId = row[colIdx['ID']];
+    if (patientName && !medId && !finId) { currentPatient = patientName; continue; }
+    if (medId || finId) {
+      txns.push({
+        PATIENT_NAME: currentPatient,
+        MED_ID: row[colIdx['Med ID']],
+        TRANSACTION_TYPE: row[colIdx['Transaction Type']],
+        TRANSACTION_DT: row[colIdx['Transaction Date/Time']],
+        FIN: row[colIdx['ID']]
+      });
+    }
+  }
+  return txns;
+}
+
+// Builds lookup indexes for the loaded Pyxis transactions: strict by FIN (preferred),
+// and a patient+day fallback for when the same patient has multiple FINs in a day
+// (rescheduling, registration changes) and the Pyxis FIN doesn't line up with the
+// BCMA row's FIN.
+function buildPyxisIndexes(txns) {
+  const byFin = {};
+  const byPatientDay = {};
+  txns.forEach(t => {
+    const day = dateOnly(t.TRANSACTION_DT);
+    if (t.FIN) (byFin[t.FIN] = byFin[t.FIN] || []).push(t);
+    const pKey = normName(t.PATIENT_NAME) + '::' + day;
+    (byPatientDay[pKey] = byPatientDay[pKey] || []).push(t);
+  });
+  return { byFin, byPatientDay };
+}
+
+// Confirms drug identity between a Pyxis Med ID and the BCMA row's NDC(s)/product name.
+// This is a heuristic (facilities vary in how Med ID maps to NDC), so results are
+// labeled by match basis in the UI rather than presented as a guaranteed pairing.
+function drugMatches(pyxisMedId, ndcList, productName) {
+  const med = normText(pyxisMedId);
+  if (!med) return false;
+  const prod = normText(productName);
+  if (prod && (med.includes(prod) || prod.includes(med))) return true;
+  return ndcList.some(ndc => {
+    const n = normText(ndc);
+    return n && (n === med || n.includes(med) || med.includes(n));
+  });
+}
+
+function checkEventAgainstPyxis(r, eventDatesStr, expectedTypes, indexes) {
+  const dates = (eventDatesStr || '').split(';').map(s => s.trim()).filter(Boolean);
+  if (dates.length === 0) return null;
+  const ndcList = (r.dispenseNdcs + ';' + r.chargeNdcs).split(';').map(s => s.trim()).filter(Boolean);
+
+  let anyCandidates = false;
+  let matchBasis = null;
+  const allVerified = dates.every(dd => {
+    const day = dateOnly(dd);
+    let candidates = (indexes.byFin[r.fin] || []).filter(t => dateOnly(t.TRANSACTION_DT) === day);
+    let basis = 'FIN';
+    if (candidates.length === 0) {
+      const pKey = normName(r.patient) + '::' + day;
+      candidates = indexes.byPatientDay[pKey] || [];
+      basis = 'Patient+Day';
+    }
+    if (candidates.length > 0) anyCandidates = true;
+    const hit = candidates.some(t => expectedTypes.includes(normText(t.TRANSACTION_TYPE)) && drugMatches(t.MED_ID, ndcList, r.product));
+    if (hit) matchBasis = basis;
+    return hit;
+  });
+  if (!anyCandidates) return { status: 'Not in Extract', basis: null };
+  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis };
+}
+
+function recomputePyxisStatus() {
+  if (!PYXIS_TXNS) {
+    REPORT.forEach(r => { r.pyxisStatus = 'N/A'; r.pyxisDispenseCheck = null; r.pyxisReturnCheck = null; });
+    return;
+  }
+  const indexes = buildPyxisIndexes(PYXIS_TXNS);
+
+  REPORT.forEach(r => {
+    const dispenseCheck = r.rawDispense > 0 ? checkEventAgainstPyxis(r, r.dispenseDates, PYXIS_EXPECTED['Device Dispense'], indexes) : null;
+    const returnCheck = r.returns > 0 ? checkEventAgainstPyxis(r, r.returnDates, PYXIS_EXPECTED['Device Return'], indexes) : null;
+    r.pyxisDispenseCheck = dispenseCheck;
+    r.pyxisReturnCheck = returnCheck;
+
+    const checks = [dispenseCheck, returnCheck].filter(Boolean);
+    if (checks.length === 0) r.pyxisStatus = 'N/A';
+    else if (checks.some(c => c.status === 'Discrepancy')) r.pyxisStatus = 'Discrepancy';
+    else if (checks.every(c => c.status === 'Not in Extract')) r.pyxisStatus = 'Not in Extract';
+    else if (checks.some(c => c.status === 'Not in Extract')) r.pyxisStatus = 'Partial (Not in Extract)';
+    else r.pyxisStatus = 'Verified';
+  });
+}
+
+function handlePyxisFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: 'array', cellDates: true });
+      PYXIS_TXNS = parsePyxisWorkbook(wb);
+      recomputePyxisStatus();
+      const dz = document.getElementById('pyxisDropzone');
+      dz.classList.add('has-data');
+      const finCount = new Set(PYXIS_TXNS.map(t => t.FIN)).size;
+      dz.innerHTML = `<div>🛡️ Loaded <b>${PYXIS_TXNS.length}</b> Pyxis transactions across <b>${finCount}</b> FINs from <b>${escapeHtml(file.name)}</b></div><button class="secondary no-print" id="pyxisResetBtn">Remove</button>`;
+      document.getElementById('pyxisResetBtn').addEventListener('click', () => {
+        PYXIS_TXNS = null;
+        recomputePyxisStatus();
+        resetPyxisDropzoneUI();
+        renderCallouts();
+        renderDetailTable();
+      });
+      renderCallouts();
+      renderDetailTable();
+    } catch (err) {
+      alert('Could not parse this Pyxis file.\n\n' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function resetPyxisDropzoneUI() {
+  const dz = document.getElementById('pyxisDropzone');
+  dz.classList.remove('has-data');
+  dz.innerHTML = `<div class="icon">🛡️</div>
+    <div><b>Drag and drop</b> a Pyxis device event report here</div>
+    <div class="hint">The standard "All Device Events Report" export grouped by patient, with Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns</div>
+    <input type="file" id="pyxisFileInput" accept=".xlsx,.xls" style="display:none">`;
+  wirePyxisDropzone();
+}
+
+// ============ RECONCILIATION FILE PARSING (drag & drop) ============
+function parseSheetToReport(rows) {
+  const groupBy = (arr, key) => arr.reduce((acc, x) => { const k = typeof key==='function'?key(x):x[key]; (acc[k] = acc[k]||[]).push(x); return acc; }, {});
+  const byFin = groupBy(rows, 'FIN');
+  const byPatientId = groupBy(rows, r => r.EDIPI || r.MRN || r.PATIENT_NAME);
+  const crossFinMap = {};
+  Object.values(byPatientId).forEach(prows => {
+    const dispenses = prows.filter(r => r.EVENT_TYPE === 'Device Dispense');
+    const charges = prows.filter(r => r.EVENT_TYPE === 'Charge on Administration');
+    dispenses.forEach(d => {
+      const dDate = dateOnly(d.EVENT_DT_TM);
+      charges.filter(c => c.FIN !== d.FIN && dateOnly(c.EVENT_DT_TM) === dDate).forEach(c => {
+        crossFinMap[d.FIN] = c.FIN; crossFinMap[c.FIN] = d.FIN;
+      });
+    });
+  });
+  const uniq = arr => [...new Set(arr)];
+  return Object.entries(byFin).map(([fin, frows]) => {
+    const dispenses = frows.filter(r => r.EVENT_TYPE === 'Device Dispense');
+    const charges = frows.filter(r => r.EVENT_TYPE === 'Charge on Administration');
+    const returns = frows.filter(r => r.EVENT_TYPE === 'Device Return');
+    const credits = frows.filter(r => r.EVENT_TYPE === 'Credit on Administration');
+    const first = frows[0];
+    const netD = dispenses.length - returns.length;
+    const netC = charges.length - credits.length;
+    const diff = netD - netC;
+    const dNdcs = uniq(dispenses.map(d=>d.NDC).filter(Boolean));
+    const cNdcs = uniq(charges.map(c=>c.NDC).filter(Boolean));
+    const ndcMatch = dNdcs.length>0 && cNdcs.length>0 && dNdcs.every(n=>cNdcs.includes(n)) && cNdcs.every(n=>dNdcs.includes(n));
+    const linkedFin = crossFinMap[fin] || null;
+    let status;
+    if (linkedFin) status = 'Resolved (Cross-FIN Match)';
+    else if (netD<=0 && netC<=0 && (returns.length>0||credits.length>0)) status='No Activity (Fully Returned/Credited)';
+    else if (netD===0 && netC>0) status='No Dispense on File';
+    else if (diff>0) status='Missing Charge(s)';
+    else if (diff<0) status='Extra Charge / Review';
+    else status = ndcMatch ? 'Balanced' : 'Balanced (NDC Mismatch)';
+    return {
+      fin, linkedFin, admIds: uniq(frows.map(r=>r.ADM_ID)).join('; '),
+      patient: first.PATIENT_NAME||'', facility: first.FACILITY||'', unit: first.NURSE_UNIT||'',
+      rawDispense: dispenses.length, returns: returns.length, netDispense: netD,
+      rawCharge: charges.length, credits: credits.length, netCharge: netC,
+      status, ndcMatch, dispenseNdcs: dNdcs.join('; '), chargeNdcs: cNdcs.join('; '),
+      dispenseDates: dispenses.map(d=>d.EVENT_DT_TM).join('; '), chargeDates: charges.map(c=>c.EVENT_DT_TM).join('; '),
+      returnDates: returns.map(r=>r.EVENT_DT_TM).join('; '), creditDates: credits.map(c=>c.EVENT_DT_TM).join('; '),
+      product: first.ASSIGNED_PRODUCT||'', orderIds: uniq(frows.map(r=>r.ORDER_ID)).join('; '),
+      pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null
+    };
+  });
+}
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      let rows;
+      if (file.name.toLowerCase().endsWith('.csv')) {
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        const headers = lines[0].split(',').map(h => h.trim());
+        rows = lines.slice(1).map(line => {
+          const cells = line.split(',');
+          const obj = {};
+          headers.forEach((h,i) => obj[h] = cells[i] ? cells[i].trim() : '');
+          return obj;
+        });
+      } else {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array', cellDates:true});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(sheet, {defval:null, raw:false});
+      }
+      REPORT = parseSheetToReport(rows);
+      state.expanded = new Set();
+      state.products = null;
+      state.productSearch = '';
+      state.statusFilter = 'All';
+      state.showUnresolvedOnly = false;
+      recomputePyxisStatus();
+      const dz = document.getElementById('dropzone');
+      dz.classList.add('has-data');
+      dz.innerHTML = `<div>✅ Loaded <b>${rows.length}</b> event rows from <b>${escapeHtml(file.name)}</b></div><button class="secondary no-print" id="resetBtn">Load different file</button>`;
+      document.getElementById('resetBtn').addEventListener('click', () => location.reload());
+      document.getElementById('showAllBtn').classList.add('active-toggle');
+      document.getElementById('showUnresolvedBtn').classList.remove('active-toggle');
+      render();
+    } catch (err) {
+      alert('Could not parse this file. Make sure it has columns like FIN, EVENT_TYPE, EVENT_DT_TM, NDC, ASSIGNED_PRODUCT, PATIENT_NAME, NURSE_UNIT, FACILITY, ORDER_ID, ADM_ID.\n\nError: ' + err.message);
+    }
+  };
+  if (file.name.toLowerCase().endsWith('.csv')) reader.readAsText(file);
+  else reader.readAsArrayBuffer(file);
+}
+
+// ============ EVENT WIRING ============
+function wirePyxisDropzone() {
+  const pyxisDropzone = document.getElementById('pyxisDropzone');
+  const pyxisFileInput = document.getElementById('pyxisFileInput');
+  pyxisDropzone.addEventListener('click', () => pyxisFileInput.click());
+  pyxisFileInput.addEventListener('change', (e) => { if (e.target.files[0]) handlePyxisFile(e.target.files[0]); });
+  pyxisDropzone.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); pyxisDropzone.classList.add('dragover'); });
+  pyxisDropzone.addEventListener('dragleave', (e) => { e.preventDefault(); pyxisDropzone.classList.remove('dragover'); });
+  pyxisDropzone.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    pyxisDropzone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) handlePyxisFile(e.dataTransfer.files[0]);
+  });
+}
+
+function initEvents() {
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); });
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  wirePyxisDropzone();
+
+  document.getElementById('search').addEventListener('input', (e) => { state.search = e.target.value; renderDetailTable(); });
+  document.getElementById('unitFilter').addEventListener('change', (e) => { state.unit = e.target.value; renderDetailTable(); });
+
+  const productBtn = document.getElementById('productFilterBtn');
+  const productPanel = document.getElementById('productFilterPanel');
+  productBtn.addEventListener('click', (e) => { e.stopPropagation(); productPanel.classList.toggle('open'); });
+  document.addEventListener('click', (e) => {
+    if (!productPanel.contains(e.target) && e.target !== productBtn) productPanel.classList.remove('open');
+  });
+  document.getElementById('productSearch').addEventListener('input', (e) => {
+    e.stopPropagation();
+    state.productSearch = e.target.value;
+    populateProductFilter();
+  });
+  document.getElementById('productSearch').addEventListener('click', (e) => e.stopPropagation());
+  document.getElementById('productSelectAll').addEventListener('click', () => {
+    const allProducts = [...new Set(REPORT.map(r => r.product))];
+    state.products = new Set(allProducts);
+    populateProductFilter();
+    renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
+  });
+  document.getElementById('productSelectNone').addEventListener('click', () => {
+    state.products = new Set();
+    populateProductFilter();
+    renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
+  });
+
+  document.getElementById('showAllBtn').addEventListener('click', () => {
+    state.showUnresolvedOnly = false;
+    document.getElementById('showAllBtn').classList.add('active-toggle');
+    document.getElementById('showUnresolvedBtn').classList.remove('active-toggle');
+    renderDetailTable();
+  });
+  document.getElementById('showUnresolvedBtn').addEventListener('click', () => {
+    state.showUnresolvedOnly = true;
+    document.getElementById('showUnresolvedBtn').classList.add('active-toggle');
+    document.getElementById('showAllBtn').classList.remove('active-toggle');
+    renderDetailTable();
+  });
+
+  document.getElementById('clearFilter').addEventListener('click', () => {
+    state.search=''; state.unit='All'; state.products=null; state.productSearch=''; state.statusFilter='All'; state.showUnresolvedOnly=false;
+    document.getElementById('search').value=''; document.getElementById('unitFilter').value='All';
+    document.getElementById('showAllBtn').classList.add('active-toggle');
+    document.getElementById('showUnresolvedBtn').classList.remove('active-toggle');
+    render();
+  });
+
+  document.getElementById('printBtn').addEventListener('click', () => window.print());
+}
+
+initEvents();
+render();
+</script>
+</body>
+</html>
