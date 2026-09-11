@@ -213,6 +213,7 @@
       <button type="button" id="showUnresolvedBtn" class="toggle-btn">Show Unresolved Only</button>
     </div>
     <button class="secondary" id="clearFilter">Clear Filter</button>
+    <button class="secondary" id="exportExcelBtn">⬇️ Export to Excel</button>
     <button id="printBtn">🖨️ Print / Save as PDF</button>
   </div>
 
@@ -611,6 +612,82 @@ function renderDetailTable() {
   });
 }
 
+// ============ EXCEL EXPORT ============
+function pyxisCheckExportText(check) {
+  if (!check) return '';
+  return check.status + (check.basis ? ` (${check.basis})` : '');
+}
+
+function exportToExcel() {
+  const rows = filteredSorted();
+  if (rows.length === 0) { alert('No rows to export — adjust your filters first.'); return; }
+
+  const detailSheetRows = rows.map(r => ({
+    'FIN': r.fin,
+    'ADM ID(s)': r.admIds,
+    'Patient': r.patient,
+    'Unit': r.unit,
+    'Facility': r.facility,
+    'Drug (Generic)': r.genericName,
+    'Product(s) Charted/Dispensed': r.product,
+    'Strength Mismatch': r.strengthMismatch ? 'Yes' : 'No',
+    'Raw Dispense': r.rawDispense,
+    'Returns': r.returns,
+    'Net Dispense': r.netDispense,
+    'Raw Charge': r.rawCharge,
+    'Credits': r.credits,
+    'Net Charge': r.netCharge,
+    'NDC Match': (r.dispenseNdcs && r.chargeNdcs) ? (r.ndcMatch ? 'Yes' : 'No') : 'N/A',
+    'Dispense NDC(s)': r.dispenseNdcs,
+    'Charge NDC(s)': r.chargeNdcs,
+    'Dispense Date(s)': r.dispenseDates,
+    'Charge Date(s)': r.chargeDates,
+    'Return Date(s)': r.returnDates,
+    'Credit Date(s)': r.creditDates,
+    'Status': r.status,
+    'Linked FIN': r.linkedFin || '',
+    'Pyxis Status': r.pyxisStatus,
+    'Pyxis Dispense Check': pyxisCheckExportText(r.pyxisDispenseCheck),
+    'Pyxis Dispense Activity Seen': (r.pyxisDispenseCheck && r.pyxisDispenseCheck.seenTxns) ? r.pyxisDispenseCheck.seenTxns.join(' | ') : '',
+    'Pyxis Return Check': pyxisCheckExportText(r.pyxisReturnCheck),
+    'Pyxis Return Activity Seen': (r.pyxisReturnCheck && r.pyxisReturnCheck.seenTxns) ? r.pyxisReturnCheck.seenTxns.join(' | ') : '',
+    'Order ID(s)': r.orderIds
+  }));
+
+  const summaryRows = computeMedSummary(scopedByProduct()).map(m => ({
+    'Drug (Generic)': m.product,
+    'Dispensed': m.dispensed,
+    'Returned': m.returned,
+    'Net Dispensed': m.netDispensed,
+    'Charged': m.charged,
+    'Credited': m.credited,
+    'Net Charged': m.netCharged,
+    'Gap (Net Dispensed - Net Charged)': m.netDispensed - m.netCharged
+  }));
+
+  const unresolved = scopedByProduct().filter(r => !r.linkedFin && r.netDispense !== r.netCharge && r.status !== 'No Activity (Fully Returned/Credited)');
+  const unaccountedRows = unresolved.map(r => {
+    const gap = r.netDispense - r.netCharge;
+    return {
+      'FIN': r.fin,
+      'Patient': r.patient,
+      'Unit': r.unit,
+      'Drug (Generic)': r.genericName,
+      'Net Dispensed': r.netDispense,
+      'Net Charged': r.netCharge,
+      'Gap': gap > 0 ? `Dispensed ${gap} more than charged` : `Charged ${Math.abs(gap)} more than dispensed`
+    };
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailSheetRows), 'Detail');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Drug Totals');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unaccountedRows.length ? unaccountedRows : [{'Result': 'Nothing unaccounted for'}]), 'Not Accounted For');
+
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  XLSX.writeFile(wb, `Pyxis-BCMA-Reconciliation-${stamp}.xlsx`);
+}
+
 // ============ PYXIS FILE PARSING ============
 function parsePyxisWorkbook(workbook) {
   const sheetName = workbook.SheetNames[0];
@@ -970,6 +1047,7 @@ function initEvents() {
     render();
   });
 
+  document.getElementById('exportExcelBtn').addEventListener('click', exportToExcel);
   document.getElementById('printBtn').addEventListener('click', () => window.print());
 }
 
