@@ -925,6 +925,35 @@ function parseSheetToReport(rows) {
   });
 }
 
+// Splits one CSV line into cells, honoring double-quoted fields (so a comma
+// inside a quoted "Last, First" patient name isn't treated as a delimiter)
+// and "" as an escaped quote within a quoted field.
+function parseCsvLine(line) {
+  const cells = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        cur += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      cells.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  cells.push(cur);
+  return cells;
+}
+
 function handleFile(file) {
   const reader = new FileReader();
   reader.onload = function(e) {
@@ -933,9 +962,9 @@ function handleFile(file) {
       if (file.name.toLowerCase().endsWith('.csv')) {
         const text = e.target.result;
         const lines = text.split(/\r?\n/).filter(l => l.trim());
-        const headers = lines[0].split(',').map(h => h.trim());
+        const headers = parseCsvLine(lines[0]).map(h => h.trim());
         rows = lines.slice(1).map(line => {
-          const cells = line.split(',');
+          const cells = parseCsvLine(line);
           const obj = {};
           headers.forEach((h,i) => obj[h] = cells[i] ? cells[i].trim() : '');
           return obj;
