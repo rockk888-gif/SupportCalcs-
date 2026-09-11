@@ -177,7 +177,7 @@
       <div id="dropzone">
         <div class="icon">📄</div>
         <div><b>Drag and drop</b> a BCMA reconciliation Excel/CSV export here</div>
-        <div class="hint">Expected columns: FIN, ADM_ID, PATIENT_NAME, EVENT_TYPE, EVENT_DT_TM, NDC, ASSIGNED_PRODUCT, NURSE_UNIT, FACILITY, ORDER_ID, EDIPI/MRN</div>
+        <div class="hint">Expected columns: FIN, ADM_ID, PATIENT_NAME, EVENT_TYPE, EVENT_DT_TM, NDC, ASSIGNED_PRODUCT, NURSE_UNIT, FACILITY, ORDER_ID, EDIPI/MRN. Optional: Formulary Generic Name (groups strengths of the same drug together and is the fuzzy fallback for Pyxis matching).</div>
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none">
       </div>
     </div>
@@ -186,7 +186,7 @@
       <div id="pyxisDropzone">
         <div class="icon">🛡️</div>
         <div><b>Drag and drop</b> a Pyxis device event report here</div>
-        <div class="hint">The standard "All Device Events Report" export grouped by patient, with Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns</div>
+        <div class="hint">The standard "All Device Events Report" export grouped by patient, with Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns. Optional: Generic Name (used as the fuzzy fallback when Med ID doesn't exactly match BCMA's ADM_ID — Pyxis doesn't report NDCs).</div>
         <input type="file" id="pyxisFileInput" accept=".xlsx,.xls" style="display:none">
       </div>
     </div>
@@ -292,18 +292,39 @@ function normName(s) {
   return (s||'').toString().toLowerCase().replace(/[^a-z0-9\s,]/g, '').split(/[\s,]+/).filter(Boolean).sort().join('|');
 }
 
+// Strips common strength/unit tokens so two strengths of the same drug group
+// together (a nurse charting the wrong strength is exactly the kind of
+// mismatch this tool should surface as a flag on one row, not silently split
+// into a "Missing Charge" row and an unrelated "No Dispense" row).
+function stripStrength(s) {
+  return (s || '').toString()
+    .replace(/\b\d+(\.\d+)?\s*(mcg|mg|g|ml|milliliters?|units?|meq|mmol|%)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+// Resolves a BCMA row's generic drug name: prefers an explicit Formulary
+// Generic Name column when the export includes one, otherwise derives it
+// from the assigned product string with strength/unit tokens stripped.
+function genericNameOf(row) {
+  const explicit = row.FORMULARY_GENERIC_NAME || row['Formulary Generic Name'] || row.GENERIC_NAME || row['Generic Name'];
+  if (explicit) return explicit.toString().trim();
+  const stripped = stripStrength(row.ASSIGNED_PRODUCT);
+  return stripped || (row.ASSIGNED_PRODUCT || '').toString().trim();
+}
+
 function scopedByProduct() {
-  return state.products === null ? REPORT : REPORT.filter(r => state.products.has(r.product));
+  return state.products === null ? REPORT : REPORT.filter(r => state.products.has(r.genericName));
 }
 
 function computeMedSummary(data) {
   const byProduct = {};
   data.forEach(r => {
-    if (!byProduct[r.product]) byProduct[r.product] = {dispensed:0, charged:0, returned:0, credited:0};
-    byProduct[r.product].dispensed += r.rawDispense;
-    byProduct[r.product].charged += r.rawCharge;
-    byProduct[r.product].returned += r.returns;
-    byProduct[r.product].credited += r.credits;
+    if (!byProduct[r.genericName]) byProduct[r.genericName] = {dispensed:0, charged:0, returned:0, credited:0};
+    byProduct[r.genericName].dispensed += r.rawDispense;
+    byProduct[r.genericName].charged += r.rawCharge;
+    byProduct[r.genericName].returned += r.returns;
+    byProduct[r.genericName].credited += r.credits;
   });
   return Object.entries(byProduct).map(([product, v]) => ({
     product, ...v, netDispensed: v.dispensed - v.returned, netCharged: v.charged - v.credited
@@ -334,7 +355,7 @@ function renderCallouts() {
     <div class="callout slate"><span>🔄</span><div><b>Netting rule:</b> A Device Return offsets one Device Dispense, and a Credit on Administration offsets one Charge, within the same FIN. Counts below reflect raw and net values.</div></div>
     <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two (or more) FINs for the same patient, same day — rescheduling, registration changes, or an appointment mishap. Dispense/charge pairs are matched by patient identity + date rather than left as open gaps, and are labeled <b>Resolved (Cross-FIN Match)</b>.</div></div>
     <div class="callout blue"><span>🧪</span><div><b>NDC crosswalk:</b> Where dispense and charge counts match but NDCs differ, it's flagged as <b>Balanced (NDC Mismatch)</b> — the pairing is complete, but pharmacy/billing should confirm whether the NDC difference is an expected package-to-billing-unit mapping.</div></div>
-    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, matched by FIN + same-day activity + drug identity (NDC or product name vs. Pyxis Med ID). When a patient has more than one FIN on the same day, the check falls back to patient + same-day + drug match and the row detail notes which basis confirmed it. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = the drug/FIN isn't covered by the Pyxis file. <b>Discrepancy</b> = Pyxis data exists for this patient/day but doesn't confirm the event. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
+    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text, if no Generic Name column is present) — this is what still confirms a dispense/charge that's the right drug charted at the wrong strength, since dispense and charge rows are grouped by generic name (strength stripped) before reconciliation even runs; a strength mismatch is flagged separately in the row detail rather than hidden. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
   `;
 }
 
@@ -408,7 +429,7 @@ function renderUnaccounted() {
       <td class="mono">${escapeHtml(r.fin)}</td>
       <td>${escapeHtml(r.patient)}</td>
       <td>${escapeHtml(r.unit)}</td>
-      <td>${escapeHtml(r.product)}</td>
+      <td>${escapeHtml(r.genericName)}</td>
       <td class="center">${r.netDispense}</td>
       <td class="center">${r.netCharge}</td>
       <td><span class="badge ${badgeCls}">${gapLabel}</span></td>
@@ -428,7 +449,7 @@ function populateUnitFilter() {
 }
 
 function populateProductFilter() {
-  const products = [...new Set(REPORT.map(r => r.product))].sort();
+  const products = [...new Set(REPORT.map(r => r.genericName))].sort();
   if (state.products === null) state.products = new Set(products);
 
   const q = state.productSearch.trim().toLowerCase();
@@ -466,9 +487,9 @@ function filteredSorted() {
   let rows = REPORT.filter(r => {
     const s = state.search.toLowerCase();
     const matchesSearch = !s || r.fin.includes(s) || r.admIds.toLowerCase().includes(s) ||
-      r.patient.toLowerCase().includes(s) || r.product.toLowerCase().includes(s);
+      r.patient.toLowerCase().includes(s) || r.genericName.toLowerCase().includes(s) || r.product.toLowerCase().includes(s);
     const matchesUnit = state.unit === 'All' || r.unit === state.unit;
-    const matchesProduct = state.products === null || state.products.has(r.product);
+    const matchesProduct = state.products === null || state.products.has(r.genericName);
     const matchesStatus = state.statusFilter === 'All' || r.status === state.statusFilter;
     const matchesResolved = !state.showUnresolvedOnly || UNRESOLVED_STATUSES.has(r.status);
     return matchesSearch && matchesUnit && matchesProduct && matchesStatus && matchesResolved;
@@ -506,7 +527,10 @@ function renderResolutionSummary() {
 function pyxisCheckLine(label, check) {
   if (!check) return '';
   const basisNote = check.basis ? ` <span class="muted">(matched by ${check.basis})</span>` : '';
-  return `${label}: <b>${escapeHtml(check.status)}</b>${basisNote}<br>`;
+  const seen = (check.seenTxns && check.seenTxns.length)
+    ? `<div class="muted mono" style="margin:2px 0 8px 0;">Pyxis activity seen: ${check.seenTxns.map(escapeHtml).join(' &nbsp;|&nbsp; ')}</div>`
+    : '<br>';
+  return `${label}: <b>${escapeHtml(check.status)}</b>${basisNote}${seen}`;
 }
 
 function renderDetailTable() {
@@ -539,7 +563,7 @@ function renderDetailTable() {
         : (PYXIS_TXNS ? 'No device dispense/return on this FIN to verify.' : 'No Pyxis file loaded.');
       html += `<tr class="detail-row"><td colspan="10">
         <div class="detail-grid">
-          <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.product)}</div></div>
+          <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.genericName)}${r.strengthMismatch ? `<div class="muted" style="margin-top:2px;">⚠ Strength/formulation mismatch — charted as: <span class="mono">${escapeHtml(r.product)}</span> — verify charting</div>` : ''}</div></div>
           <div><div class="field-label">Facility</div><div class="field-value">${escapeHtml(r.facility)}</div></div>
           <div style="grid-column: 1 / -1;"><div class="field-label">Pyxis Verification</div><div class="field-value">${pyxisDetail}</div></div>
           <div><div class="field-label">Dispense NDC(s)</div><div class="field-value mono">${escapeHtml(r.dispenseNdcs)||'—'}</div></div>
@@ -624,6 +648,7 @@ function parsePyxisWorkbook(workbook) {
       txns.push({
         PATIENT_NAME: currentPatient,
         MED_ID: row[colIdx['Med ID']],
+        GENERIC_NAME: ('Generic Name' in colIdx) ? row[colIdx['Generic Name']] : null,
         TRANSACTION_TYPE: row[colIdx['Transaction Type']],
         TRANSACTION_DT: row[colIdx['Transaction Date/Time']],
         FIN: row[colIdx['ID']]
@@ -649,43 +674,54 @@ function buildPyxisIndexes(txns) {
   return { byFin, byPatientDay };
 }
 
-// Confirms drug identity between a Pyxis Med ID and the BCMA row's NDC(s)/product name.
-// This is a heuristic (facilities vary in how Med ID maps to NDC), so results are
-// labeled by match basis in the UI rather than presented as a guaranteed pairing.
-function drugMatches(pyxisMedId, ndcList, productName) {
-  const med = normText(pyxisMedId);
-  if (!med) return false;
-  const prod = normText(productName);
-  if (prod && (med.includes(prod) || prod.includes(med))) return true;
-  return ndcList.some(ndc => {
-    const n = normText(ndc);
-    return n && (n === med || n.includes(med) || med.includes(n));
-  });
+// Primary drug-identity check: BCMA's ADM_ID is the same value as Pyxis's Med ID
+// when they refer to the same formulary item — an exact match, not a heuristic.
+function admIdMatches(pyxisMedId, admIds) {
+  const med = pyxisMedId == null ? '' : pyxisMedId.toString().trim();
+  if (!med || !admIds || admIds.length === 0) return false;
+  return admIds.some(id => (id == null ? '' : id.toString().trim()) === med);
 }
 
-function checkEventAgainstPyxis(r, eventDatesStr, expectedTypes, indexes) {
+// Fallback drug-identity check, used only when ADM_ID doesn't line up with Med ID
+// (e.g. a nurse charted the wrong strength of the right drug). Pyxis doesn't report
+// NDCs, so this compares generic-name text: Pyxis's own Generic Name column when the
+// export includes one, otherwise its Med ID text, against BCMA's (Formulary) Generic
+// Name. Both sides are already strength-stripped before this runs, so a strength
+// mismatch alone won't block the match — it gets surfaced separately as a flag.
+function drugMatches(pyxisText, bcmaGenericName) {
+  const med = normText(pyxisText);
+  const prod = normText(bcmaGenericName);
+  if (!med || !prod) return false;
+  return med === prod || med.includes(prod) || prod.includes(med);
+}
+
+function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypes, indexes) {
   const dates = (eventDatesStr || '').split(';').map(s => s.trim()).filter(Boolean);
   if (dates.length === 0) return null;
-  const ndcList = (r.dispenseNdcs + ';' + r.chargeNdcs).split(';').map(s => s.trim()).filter(Boolean);
 
   let anyCandidates = false;
   let matchBasis = null;
+  const seenTxns = [];
   const allVerified = dates.every(dd => {
     const day = dateOnly(dd);
     let candidates = (indexes.byFin[r.fin] || []).filter(t => dateOnly(t.TRANSACTION_DT) === day);
-    let basis = 'FIN';
+    let locBasis = 'FIN';
     if (candidates.length === 0) {
       const pKey = normName(r.patient) + '::' + day;
       candidates = indexes.byPatientDay[pKey] || [];
-      basis = 'Patient+Day';
+      locBasis = 'Patient+Day';
     }
     if (candidates.length > 0) anyCandidates = true;
-    const hit = candidates.some(t => expectedTypes.includes(normText(t.TRANSACTION_TYPE)) && drugMatches(t.MED_ID, ndcList, r.product));
-    if (hit) matchBasis = basis;
-    return hit;
+    candidates.forEach(t => seenTxns.push(`${t.MED_ID || '(no Med ID)'}${t.GENERIC_NAME ? ' / ' + t.GENERIC_NAME : ''} — ${t.TRANSACTION_TYPE || '?'} @ ${t.TRANSACTION_DT || '?'}`));
+
+    const typeMatches = candidates.filter(t => expectedTypes.includes(normText(t.TRANSACTION_TYPE)));
+    if (typeMatches.some(t => admIdMatches(t.MED_ID, admIds))) { matchBasis = `${locBasis} + ADM_ID`; return true; }
+    if (typeMatches.some(t => drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName))) { matchBasis = `${locBasis} + Generic Name (fuzzy)`; return true; }
+    return false;
   });
-  if (!anyCandidates) return { status: 'Not in Extract', basis: null };
-  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis };
+  const uniqueSeen = [...new Set(seenTxns)];
+  if (!anyCandidates) return { status: 'Not in Extract', basis: null, seenTxns: [] };
+  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis, seenTxns: uniqueSeen };
 }
 
 function recomputePyxisStatus() {
@@ -696,8 +732,8 @@ function recomputePyxisStatus() {
   const indexes = buildPyxisIndexes(PYXIS_TXNS);
 
   REPORT.forEach(r => {
-    const dispenseCheck = r.rawDispense > 0 ? checkEventAgainstPyxis(r, r.dispenseDates, PYXIS_EXPECTED['Device Dispense'], indexes) : null;
-    const returnCheck = r.returns > 0 ? checkEventAgainstPyxis(r, r.returnDates, PYXIS_EXPECTED['Device Return'], indexes) : null;
+    const dispenseCheck = r.rawDispense > 0 ? checkEventAgainstPyxis(r, r.dispenseDates, r.dispenseAdmIds, PYXIS_EXPECTED['Device Dispense'], indexes) : null;
+    const returnCheck = r.returns > 0 ? checkEventAgainstPyxis(r, r.returnDates, r.returnAdmIds, PYXIS_EXPECTED['Device Return'], indexes) : null;
     r.pyxisDispenseCheck = dispenseCheck;
     r.pyxisReturnCheck = returnCheck;
 
@@ -751,7 +787,12 @@ function resetPyxisDropzoneUI() {
 // ============ RECONCILIATION FILE PARSING (drag & drop) ============
 function parseSheetToReport(rows) {
   const groupBy = (arr, key) => arr.reduce((acc, x) => { const k = typeof key==='function'?key(x):x[key]; (acc[k] = acc[k]||[]).push(x); return acc; }, {});
-  const byFin = groupBy(rows, 'FIN');
+  // Group by FIN + generic drug, not FIN alone: a single encounter can carry
+  // more than one drug once tracking spans the whole formulary, and lumping
+  // them into one FIN row would net one drug's dispense against another
+  // drug's charge.
+  const gkey = r => normText(genericNameOf(r));
+  const byFinDrug = groupBy(rows, r => r.FIN + '::' + gkey(r));
   const byPatientId = groupBy(rows, r => r.EDIPI || r.MRN || r.PATIENT_NAME);
   const crossFinMap = {};
   Object.values(byPatientId).forEach(prows => {
@@ -759,13 +800,16 @@ function parseSheetToReport(rows) {
     const charges = prows.filter(r => r.EVENT_TYPE === 'Charge on Administration');
     dispenses.forEach(d => {
       const dDate = dateOnly(d.EVENT_DT_TM);
-      charges.filter(c => c.FIN !== d.FIN && dateOnly(c.EVENT_DT_TM) === dDate).forEach(c => {
-        crossFinMap[d.FIN] = c.FIN; crossFinMap[c.FIN] = d.FIN;
+      const dKey = gkey(d);
+      charges.filter(c => c.FIN !== d.FIN && dateOnly(c.EVENT_DT_TM) === dDate && gkey(c) === dKey).forEach(c => {
+        crossFinMap[d.FIN + '::' + dKey] = c.FIN;
+        crossFinMap[c.FIN + '::' + dKey] = d.FIN;
       });
     });
   });
   const uniq = arr => [...new Set(arr)];
-  return Object.entries(byFin).map(([fin, frows]) => {
+  return Object.entries(byFinDrug).map(([groupKey, frows]) => {
+    const fin = frows[0].FIN;
     const dispenses = frows.filter(r => r.EVENT_TYPE === 'Device Dispense');
     const charges = frows.filter(r => r.EVENT_TYPE === 'Charge on Administration');
     const returns = frows.filter(r => r.EVENT_TYPE === 'Device Return');
@@ -777,23 +821,28 @@ function parseSheetToReport(rows) {
     const dNdcs = uniq(dispenses.map(d=>d.NDC).filter(Boolean));
     const cNdcs = uniq(charges.map(c=>c.NDC).filter(Boolean));
     const ndcMatch = dNdcs.length>0 && cNdcs.length>0 && dNdcs.every(n=>cNdcs.includes(n)) && cNdcs.every(n=>dNdcs.includes(n));
-    const linkedFin = crossFinMap[fin] || null;
+    const linkedFin = crossFinMap[groupKey] || null;
+    const rawProducts = uniq(frows.map(r=>r.ASSIGNED_PRODUCT).filter(Boolean));
     let status;
     if (linkedFin) status = 'Resolved (Cross-FIN Match)';
     else if (netD<=0 && netC<=0 && (returns.length>0||credits.length>0)) status='No Activity (Fully Returned/Credited)';
     else if (netD===0 && netC>0) status='No Dispense on File';
     else if (diff>0) status='Missing Charge(s)';
     else if (diff<0) status='Extra Charge / Review';
-    else status = ndcMatch ? 'Balanced' : 'Balanced (NDC Mismatch)';
+    else status = (dNdcs.length === 0 && cNdcs.length === 0) ? 'Balanced' : (ndcMatch ? 'Balanced' : 'Balanced (NDC Mismatch)');
     return {
-      fin, linkedFin, admIds: uniq(frows.map(r=>r.ADM_ID)).join('; '),
+      fin, linkedFin, admIds: uniq(frows.map(r=>r.ADM_ID).filter(Boolean)).join('; '),
+      dispenseAdmIds: uniq(dispenses.map(d=>d.ADM_ID).filter(Boolean)),
+      returnAdmIds: uniq(returns.map(r=>r.ADM_ID).filter(Boolean)),
       patient: first.PATIENT_NAME||'', facility: first.FACILITY||'', unit: first.NURSE_UNIT||'',
       rawDispense: dispenses.length, returns: returns.length, netDispense: netD,
       rawCharge: charges.length, credits: credits.length, netCharge: netC,
       status, ndcMatch, dispenseNdcs: dNdcs.join('; '), chargeNdcs: cNdcs.join('; '),
       dispenseDates: dispenses.map(d=>d.EVENT_DT_TM).join('; '), chargeDates: charges.map(c=>c.EVENT_DT_TM).join('; '),
       returnDates: returns.map(r=>r.EVENT_DT_TM).join('; '), creditDates: credits.map(c=>c.EVENT_DT_TM).join('; '),
-      product: first.ASSIGNED_PRODUCT||'', orderIds: uniq(frows.map(r=>r.ORDER_ID)).join('; '),
+      genericName: genericNameOf(first), product: rawProducts.join(' / ') || (first.ASSIGNED_PRODUCT||''),
+      strengthMismatch: rawProducts.length > 1,
+      orderIds: uniq(frows.map(r=>r.ORDER_ID)).join('; '),
       pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null
     };
   });
@@ -889,7 +938,7 @@ function initEvents() {
   });
   document.getElementById('productSearch').addEventListener('click', (e) => e.stopPropagation());
   document.getElementById('productSelectAll').addEventListener('click', () => {
-    const allProducts = [...new Set(REPORT.map(r => r.product))];
+    const allProducts = [...new Set(REPORT.map(r => r.genericName))];
     state.products = new Set(allProducts);
     populateProductFilter();
     renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
