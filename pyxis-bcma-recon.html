@@ -289,23 +289,31 @@ const STATUS_META = {
 };
 const UNRESOLVED_STATUSES = new Set(['Missing Charge(s)', 'No Dispense on File', 'Extra Charge / Review']);
 
-// BCMA device-side event types mapped to the Pyxis transaction type(s) that should
-// corroborate them. Adjust this map if your facility's Pyxis vocabulary differs
-// (e.g. some configs log "Waste" instead of "Return", or use "Restock"/"Load").
-const PYXIS_EXPECTED = {
-  'Device Dispense': ['remove'],
-  'Device Return': ['return', 'restock', 'waste']
+// Pyxis transaction-type text varies a lot by facility -- "Remove" vs "Remove
+// CANCELLED", a plain "Return" vs "Return to bin" -- so matching is keyword-based
+// (substring match on stripped/lowercased text) rather than exact-string, with
+// explicit exclusions so an aborted/cancelled transaction never counts as a real
+// one. Adjust the include lists if your facility's vocabulary differs further.
+const PYXIS_TYPE_SPECS = {
+  remove: { include: ['remove'], exclude: ['cancel'] },
+  return: { include: ['return', 'restock', 'refill', 'waste'], exclude: ['cancel'] },
+  risk: { include: ['override', 'discrepancy'], exclude: [] }
 };
 
-// Pyxis transaction types that must be explained by a BCMA dispense somewhere --
-// a Remove with no matching BCMA record is the diversion signal the reverse
-// (Pyxis-driven) check exists to catch.
-const PYXIS_PULL_TYPES = ['remove'];
+function pyxisTypeMatchesSpec(rawType, specKey) {
+  const spec = PYXIS_TYPE_SPECS[specKey];
+  const norm = normText(rawType);
+  if (!norm) return false;
+  if (spec.exclude.some(x => norm.includes(x))) return false;
+  return spec.include.some(inc => norm.includes(inc));
+}
 
-// Pyxis transaction types worth surfacing on their own regardless of whether a
-// BCMA match exists -- an override bypasses the normal profile check, and an
-// unresolved discrepancy is exactly the kind of thing that shouldn't go unread.
-const PYXIS_RISK_TYPES = ['override', 'discrepancy'];
+// BCMA device-side event types mapped to the Pyxis transaction-type spec that
+// should corroborate them.
+const PYXIS_EXPECTED = {
+  'Device Dispense': 'remove',
+  'Device Return': 'return'
+};
 
 let state = { search: '', unit: 'All', products: null, knownProducts: null, productSearch: '', statusFilter: 'All', sortField: 'status', sortDir: 'asc', expanded: new Set(), showUnresolvedOnly: false };
 let PYXIS_TXNS = null;
@@ -586,7 +594,7 @@ function computeUnmatchedPyxisPulls() {
   if (!PYXIS_TXNS) return null;
   const lookup = buildBcmaDispenseLookup();
   return PYXIS_TXNS
-    .filter(t => PYXIS_PULL_TYPES.includes(normText(t.TRANSACTION_TYPE)))
+    .filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'remove'))
     .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID))
     .filter(t => !pyxisTxnMatchesBcma(t, lookup));
 }
@@ -622,7 +630,7 @@ function renderUnmatchedPyxisTable() {
 function computeRiskFlaggedPyxisTxns() {
   if (!PYXIS_TXNS) return null;
   return PYXIS_TXNS
-    .filter(t => PYXIS_RISK_TYPES.includes(normText(t.TRANSACTION_TYPE)))
+    .filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'risk'))
     .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID));
 }
 
@@ -991,6 +999,11 @@ function parsePyxisWorkbook(workbook) {
   const missing = required.filter(c => !(c in colIdx));
   if (missing.length) throw new Error('Missing expected columns in Pyxis file: ' + missing.join(', '));
 
+  // The drug-name column isn't part of the standard export and its header text
+  // varies by facility -- try the common variants in order, first match wins.
+  const GENERIC_NAME_HEADER_CANDIDATES = ['Generic Name', 'Generic_Name', 'GenericName', 'Drug Name', 'Item Name', 'Item Description', 'Medication', 'Medication Name', 'Med Name', 'Description', 'Product Name'];
+  const genericNameCol = GENERIC_NAME_HEADER_CANDIDATES.find(c => c in colIdx);
+
   let currentPatient = null;
   const txns = [];
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -1004,7 +1017,7 @@ function parsePyxisWorkbook(workbook) {
       txns.push({
         PATIENT_NAME: currentPatient,
         MED_ID: row[colIdx['Med ID']],
-        GENERIC_NAME: ('Generic Name' in colIdx) ? row[colIdx['Generic Name']] : null,
+        GENERIC_NAME: genericNameCol ? row[colIdx[genericNameCol]] : null,
         TRANSACTION_TYPE: row[colIdx['Transaction Type']],
         TRANSACTION_DT: row[colIdx['Transaction Date/Time']],
         FIN: row[colIdx['ID']]
@@ -1051,7 +1064,7 @@ function drugMatches(pyxisText, bcmaGenericName) {
   return med === prod || med.includes(prod) || prod.includes(med);
 }
 
-function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypes, indexes) {
+function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, indexes) {
   const dates = (eventDatesStr || '').split(';').map(s => s.trim()).filter(Boolean);
   if (dates.length === 0) return null;
 
@@ -1070,7 +1083,7 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypes, indexes
     if (candidates.length > 0) anyCandidates = true;
     candidates.forEach(t => seenTxns.push(`${t.MED_ID || '(no Med ID)'}${t.GENERIC_NAME ? ' / ' + t.GENERIC_NAME : ''} — ${t.TRANSACTION_TYPE || '?'} @ ${t.TRANSACTION_DT || '?'}`));
 
-    const typeMatches = candidates.filter(t => expectedTypes.includes(normText(t.TRANSACTION_TYPE)));
+    const typeMatches = candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, expectedTypeSpec));
     if (typeMatches.some(t => admIdMatches(t.MED_ID, admIds))) { matchBasis = `${locBasis} + ADM_ID`; return true; }
     if (typeMatches.some(t => drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName))) { matchBasis = `${locBasis} + Generic Name (fuzzy)`; return true; }
     return false;
