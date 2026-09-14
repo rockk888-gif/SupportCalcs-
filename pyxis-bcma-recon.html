@@ -96,6 +96,7 @@
   .callout.teal { background: var(--teal-bg); border-color: var(--teal-border); color: #115e59; }
   .callout.blue { background: var(--blue-bg); border-color: var(--blue-border); color: #1e3a8a; }
   .callout.emerald { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .callout.red { background: var(--red-bg); border-color: var(--red-border); color: #7f1d1d; }
   .callout b { font-weight: 700; }
 
   .cards {
@@ -233,6 +234,29 @@
     </section>
 
     <section>
+      <h2>Pyxis Activity Summary — All Transaction Types</h2>
+      <div class="callout slate"><span>📋</span><div>Raw counts of every Pyxis transaction type seen for each drug in the loaded Pyxis file — Remove, Return, Waste, Restock/Refill, Override, Discrepancy, whatever your facility logs — independent of any BCMA match. This is a movement tally, not a discrepancy check: use it to spot overall drift (e.g. Removes far outpacing what's charted) before drilling into per-patient detail below.</div></div>
+      <div style="overflow-x:auto;">
+        <table id="pyxisActivityTable"></table>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="unmatchedPyxisTitle">Pyxis Pulls With No BCMA Record</h2>
+      <div class="callout red"><span>🚨</span><div>Every Pyxis <b>Remove</b> for a selected drug, checked for a matching BCMA Device Dispense (same ADM_ID/Med ID, or same FIN/patient+day and Generic Name if ADM_ID doesn't line up). A pull with nothing here means medication left the cabinet with no administration ever charted for it — the classic diversion signal, and the reverse of every other check on this page (those all start from BCMA and ask "does Pyxis confirm this?"; this one starts from Pyxis and asks "did this ever reach a patient's chart?").</div></div>
+      <div style="overflow-x:auto;">
+        <table id="unmatchedPyxisTable"></table>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="riskFlaggedPyxisTitle">Other Flagged Pyxis Activity — Override / Discrepancy</h2>
+      <div style="overflow-x:auto;">
+        <table id="riskFlaggedPyxisTable"></table>
+      </div>
+    </section>
+
+    <section>
       <h2 id="unaccountedTitle">Not Accounted For</h2>
       <table id="unaccountedTable"></table>
     </section>
@@ -273,7 +297,17 @@ const PYXIS_EXPECTED = {
   'Device Return': ['return', 'restock', 'waste']
 };
 
-let state = { search: '', unit: 'All', products: null, productSearch: '', statusFilter: 'All', sortField: 'status', sortDir: 'asc', expanded: new Set(), showUnresolvedOnly: false };
+// Pyxis transaction types that must be explained by a BCMA dispense somewhere --
+// a Remove with no matching BCMA record is the diversion signal the reverse
+// (Pyxis-driven) check exists to catch.
+const PYXIS_PULL_TYPES = ['remove'];
+
+// Pyxis transaction types worth surfacing on their own regardless of whether a
+// BCMA match exists -- an override bypasses the normal profile check, and an
+// unresolved discrepancy is exactly the kind of thing that shouldn't go unread.
+const PYXIS_RISK_TYPES = ['override', 'discrepancy'];
+
+let state = { search: '', unit: 'All', products: null, knownProducts: null, productSearch: '', statusFilter: 'All', sortField: 'status', sortDir: 'asc', expanded: new Set(), showUnresolvedOnly: false };
 let PYXIS_TXNS = null;
 
 function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
@@ -318,6 +352,17 @@ function scopedByProduct() {
   return state.products === null ? REPORT : REPORT.filter(r => state.products.has(r.genericName));
 }
 
+// Applies the same drug multiselect to a raw Pyxis label (Generic Name or Med ID
+// text), reusing the fuzzy drugMatches check since Pyxis labels don't line up
+// character-for-character with the BCMA generic names in state.products.
+function pyxisDrugSelected(pyxisLabel) {
+  if (state.products === null) return true;
+  for (const p of state.products) {
+    if (drugMatches(pyxisLabel, p)) return true;
+  }
+  return false;
+}
+
 function computeMedSummary(data) {
   const byProduct = {};
   data.forEach(r => {
@@ -342,6 +387,7 @@ function render() {
   renderCallouts();
   renderCards();
   renderMedTable();
+  renderPyxisSideViews();
   renderUnaccounted();
   renderDetailTable();
   populateUnitFilter();
@@ -441,6 +487,158 @@ function renderUnaccounted() {
     <tbody>${rows}</tbody>`;
 }
 
+// ============ PYXIS-SIDE VIEWS (movement summary + reverse/orphan-pull check) ============
+// Everything below reads PYXIS_TXNS directly rather than REPORT rows -- these
+// views exist precisely because the BCMA-driven reconciliation above can only
+// ever check Pyxis activity in service of a BCMA row that already exists, so a
+// Pyxis pull with no BCMA row at all is otherwise invisible.
+
+function buildPyxisActivitySummary(txns) {
+  const byDrug = {};
+  const typeLabels = {};
+  txns.forEach(t => {
+    const drugLabel = (t.GENERIC_NAME || t.MED_ID || '').toString().trim() || '(no Med ID)';
+    if (!pyxisDrugSelected(drugLabel)) return;
+    const typeRaw = (t.TRANSACTION_TYPE || '').toString().trim() || '(unspecified)';
+    const typeKey = typeRaw.toLowerCase();
+    if (!typeLabels[typeKey]) typeLabels[typeKey] = typeRaw;
+    if (!byDrug[drugLabel]) byDrug[drugLabel] = {};
+    byDrug[drugLabel][typeKey] = (byDrug[drugLabel][typeKey] || 0) + 1;
+  });
+  return { byDrug, typeLabels };
+}
+
+function renderPyxisActivityTable() {
+  if (!PYXIS_TXNS) {
+    document.getElementById('pyxisActivityTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to see drug-level movement totals.</td></tr></tbody>';
+    return;
+  }
+  const { byDrug, typeLabels } = buildPyxisActivitySummary(PYXIS_TXNS);
+  const typeKeys = Object.keys(typeLabels).sort((a, b) => typeLabels[a].localeCompare(typeLabels[b]));
+  const drugLabels = Object.keys(byDrug).sort();
+  if (drugLabels.length === 0) {
+    document.getElementById('pyxisActivityTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">No Pyxis activity for the drugs currently selected above.</td></tr></tbody>';
+    return;
+  }
+
+  const totalsByType = {};
+  typeKeys.forEach(k => totalsByType[k] = 0);
+  let grandTotal = 0;
+  const rows = drugLabels.map(drug => {
+    let rowTotal = 0;
+    const cells = typeKeys.map(k => {
+      const c = (byDrug[drug][k] || 0);
+      totalsByType[k] += c;
+      rowTotal += c;
+      return `<td class="center">${c || '<span class="muted">0</span>'}</td>`;
+    }).join('');
+    grandTotal += rowTotal;
+    return `<tr><td>${escapeHtml(drug)}</td>${cells}<td class="center"><b>${rowTotal}</b></td></tr>`;
+  }).join('');
+  const totalRow = `<tr style="font-weight:700; border-top:2px solid #cbd5e1;"><td>TOTAL</td>${typeKeys.map(k => `<td class="center">${totalsByType[k]}</td>`).join('')}<td class="center">${grandTotal}</td></tr>`;
+
+  document.getElementById('pyxisActivityTable').innerHTML = `
+    <thead><tr><th>Drug (Pyxis)</th>${typeKeys.map(k => `<th class="center">${escapeHtml(typeLabels[k])}</th>`).join('')}<th class="center">Total</th></tr></thead>
+    <tbody>${rows}${totalRow}</tbody>`;
+}
+
+// Indexes BCMA dispense rows for the reverse lookup: given a Pyxis pull, find
+// the BCMA row it should explain. Mirrors the FIN-first, patient+day-fallback
+// pattern used everywhere else in this file.
+function buildBcmaDispenseLookup() {
+  const byFin = {};
+  const byPatientDay = {};
+  REPORT.forEach(r => {
+    if (r.rawDispense === 0) return;
+    (byFin[r.fin] = byFin[r.fin] || []).push(r);
+    (r.dispenseDates || '').split(';').map(s => s.trim()).filter(Boolean).forEach(dd => {
+      const key = normName(r.patient) + '::' + dateOnly(dd);
+      (byPatientDay[key] = byPatientDay[key] || []).push(r);
+    });
+  });
+  return { byFin, byPatientDay };
+}
+
+function pyxisTxnMatchesBcma(t, lookup) {
+  const day = dateOnly(t.TRANSACTION_DT);
+  let candidates = lookup.byFin[t.FIN] || [];
+  if (candidates.length === 0) {
+    candidates = lookup.byPatientDay[normName(t.PATIENT_NAME) + '::' + day] || [];
+  }
+  return candidates.some(r => {
+    const dDates = (r.dispenseDates || '').split(';').map(s => s.trim()).filter(Boolean).map(dateOnly);
+    if (!dDates.includes(day)) return false;
+    return admIdMatches(t.MED_ID, r.dispenseAdmIds) || drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName);
+  });
+}
+
+function computeUnmatchedPyxisPulls() {
+  if (!PYXIS_TXNS) return null;
+  const lookup = buildBcmaDispenseLookup();
+  return PYXIS_TXNS
+    .filter(t => PYXIS_PULL_TYPES.includes(normText(t.TRANSACTION_TYPE)))
+    .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID))
+    .filter(t => !pyxisTxnMatchesBcma(t, lookup));
+}
+
+function pyxisTxnRow(t) {
+  return `<tr>
+    <td>${escapeHtml(t.PATIENT_NAME || '')}</td>
+    <td class="mono">${escapeHtml(t.FIN || '')}</td>
+    <td class="mono">${escapeHtml(t.MED_ID || '')}</td>
+    <td>${escapeHtml(t.GENERIC_NAME || '')}</td>
+    <td>${escapeHtml(t.TRANSACTION_TYPE || '')}</td>
+    <td>${escapeHtml(t.TRANSACTION_DT || '')}</td>
+  </tr>`;
+}
+
+function renderUnmatchedPyxisTable() {
+  const rows = computeUnmatchedPyxisPulls();
+  if (rows === null) {
+    document.getElementById('unmatchedPyxisTitle').textContent = 'Pyxis Pulls With No BCMA Record';
+    document.getElementById('unmatchedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to run this check.</td></tr></tbody>';
+    return;
+  }
+  document.getElementById('unmatchedPyxisTitle').textContent = `Pyxis Pulls With No BCMA Record (${rows.length})`;
+  if (rows.length === 0) {
+    document.getElementById('unmatchedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ Every Pyxis Remove for the selected drugs has a matching BCMA dispense.</td></tr></tbody>';
+    return;
+  }
+  document.getElementById('unmatchedPyxisTable').innerHTML = `
+    <thead><tr><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th></tr></thead>
+    <tbody>${rows.map(pyxisTxnRow).join('')}</tbody>`;
+}
+
+function computeRiskFlaggedPyxisTxns() {
+  if (!PYXIS_TXNS) return null;
+  return PYXIS_TXNS
+    .filter(t => PYXIS_RISK_TYPES.includes(normText(t.TRANSACTION_TYPE)))
+    .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID));
+}
+
+function renderRiskFlaggedPyxisTable() {
+  const rows = computeRiskFlaggedPyxisTxns();
+  if (rows === null) {
+    document.getElementById('riskFlaggedPyxisTitle').textContent = 'Other Flagged Pyxis Activity — Override / Discrepancy';
+    document.getElementById('riskFlaggedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to see this.</td></tr></tbody>';
+    return;
+  }
+  document.getElementById('riskFlaggedPyxisTitle').textContent = `Other Flagged Pyxis Activity — Override / Discrepancy (${rows.length})`;
+  if (rows.length === 0) {
+    document.getElementById('riskFlaggedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ No Override or Discrepancy transactions for the selected drugs.</td></tr></tbody>';
+    return;
+  }
+  document.getElementById('riskFlaggedPyxisTable').innerHTML = `
+    <thead><tr><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th></tr></thead>
+    <tbody>${rows.map(pyxisTxnRow).join('')}</tbody>`;
+}
+
+function renderPyxisSideViews() {
+  renderPyxisActivityTable();
+  renderUnmatchedPyxisTable();
+  renderRiskFlaggedPyxisTable();
+}
+
 function populateUnitFilter() {
   const sel = document.getElementById('unitFilter');
   const current = sel.value;
@@ -449,9 +647,32 @@ function populateUnitFilter() {
   sel.value = units.includes(current) ? current : 'All';
 }
 
+// The full drug universe for the filter is BCMA's generic names *plus* whatever
+// drug labels appear in Pyxis, not just BCMA's. A drug pulled in Pyxis with zero
+// BCMA activity -- the exact case the orphan-pull check exists to catch -- would
+// otherwise never make it into the default-selected set and be invisible there.
+function allDrugLabels() {
+  const bcma = REPORT.map(r => r.genericName);
+  const pyxis = PYXIS_TXNS ? PYXIS_TXNS.map(t => (t.GENERIC_NAME || t.MED_ID || '').toString().trim()).filter(Boolean) : [];
+  return [...new Set([...bcma, ...pyxis])].sort();
+}
+
 function populateProductFilter() {
-  const products = [...new Set(REPORT.map(r => r.genericName))].sort();
-  if (state.products === null) state.products = new Set(products);
+  const products = allDrugLabels();
+  if (state.products === null) {
+    state.products = new Set(products);
+    state.knownProducts = new Set(products);
+  } else {
+    // Auto-select drug labels discovered since the last population (e.g. a
+    // Pyxis file loaded after the BCMA file revealed a Pyxis-only drug) --
+    // but leave alone anything the user has already deliberately unchecked.
+    products.forEach(p => {
+      if (!state.knownProducts.has(p)) {
+        state.knownProducts.add(p);
+        state.products.add(p);
+      }
+    });
+  }
 
   const q = state.productSearch.trim().toLowerCase();
   const visible = q ? products.filter(p => p.toLowerCase().includes(q)) : products;
@@ -468,7 +689,7 @@ function populateProductFilter() {
       if (cb.checked) state.products.add(cb.value);
       else state.products.delete(cb.value);
       updateProductLabel(products);
-      renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
+      renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderDetailTable();
     });
   });
 
@@ -679,9 +900,53 @@ function exportToExcel() {
     };
   });
 
+  const pyxisActivity = PYXIS_TXNS ? buildPyxisActivitySummary(PYXIS_TXNS) : null;
+  let pyxisActivityRows = [{'Result': 'No Pyxis file loaded'}];
+  if (pyxisActivity) {
+    const typeKeys = Object.keys(pyxisActivity.typeLabels).sort((a,b) => pyxisActivity.typeLabels[a].localeCompare(pyxisActivity.typeLabels[b]));
+    const drugLabels = Object.keys(pyxisActivity.byDrug).sort();
+    const totalsByType = {}; typeKeys.forEach(k => totalsByType[k] = 0); let grandTotal = 0;
+    pyxisActivityRows = drugLabels.map(drug => {
+      const row = { 'Drug (Pyxis)': drug };
+      let rowTotal = 0;
+      typeKeys.forEach(k => {
+        const c = pyxisActivity.byDrug[drug][k] || 0;
+        row[pyxisActivity.typeLabels[k]] = c;
+        totalsByType[k] += c;
+        rowTotal += c;
+      });
+      row['Total'] = rowTotal;
+      grandTotal += rowTotal;
+      return row;
+    });
+    if (pyxisActivityRows.length) {
+      const totalRow = { 'Drug (Pyxis)': 'TOTAL' };
+      typeKeys.forEach(k => totalRow[pyxisActivity.typeLabels[k]] = totalsByType[k]);
+      totalRow['Total'] = grandTotal;
+      pyxisActivityRows.push(totalRow);
+    }
+  }
+
+  const unmatchedPulls = computeUnmatchedPyxisPulls();
+  const unmatchedPullRows = unmatchedPulls === null ? [{'Result': 'No Pyxis file loaded'}] :
+    (unmatchedPulls.length ? unmatchedPulls.map(t => ({
+      'Patient': t.PATIENT_NAME || '', 'FIN': t.FIN || '', 'Med ID': t.MED_ID || '',
+      'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || ''
+    })) : [{'Result': 'Every Pyxis Remove has a matching BCMA dispense'}]);
+
+  const riskFlagged = computeRiskFlaggedPyxisTxns();
+  const riskFlaggedRows = riskFlagged === null ? [{'Result': 'No Pyxis file loaded'}] :
+    (riskFlagged.length ? riskFlagged.map(t => ({
+      'Patient': t.PATIENT_NAME || '', 'FIN': t.FIN || '', 'Med ID': t.MED_ID || '',
+      'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || ''
+    })) : [{'Result': 'No Override or Discrepancy transactions'}]);
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailSheetRows), 'Detail');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Drug Totals');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pyxisActivityRows), 'Pyxis Activity Summary');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unmatchedPullRows), 'Pyxis No BCMA Record');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(riskFlaggedRows), 'Pyxis Override-Discrepancy');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unaccountedRows.length ? unaccountedRows : [{'Result': 'Nothing unaccounted for'}]), 'Not Accounted For');
 
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
@@ -840,9 +1105,13 @@ function handlePyxisFile(file) {
         recomputePyxisStatus();
         resetPyxisDropzoneUI();
         renderCallouts();
+        populateProductFilter();
+        renderPyxisSideViews();
         renderDetailTable();
       });
       renderCallouts();
+      populateProductFilter();
+      renderPyxisSideViews();
       renderDetailTable();
     } catch (err) {
       alert('Could not parse this Pyxis file.\n\n' + err.message);
@@ -978,6 +1247,7 @@ function handleFile(file) {
       REPORT = parseSheetToReport(rows);
       state.expanded = new Set();
       state.products = null;
+      state.knownProducts = null;
       state.productSearch = '';
       state.statusFilter = 'All';
       state.showUnresolvedOnly = false;
@@ -1044,15 +1314,15 @@ function initEvents() {
   });
   document.getElementById('productSearch').addEventListener('click', (e) => e.stopPropagation());
   document.getElementById('productSelectAll').addEventListener('click', () => {
-    const allProducts = [...new Set(REPORT.map(r => r.genericName))];
+    const allProducts = allDrugLabels();
     state.products = new Set(allProducts);
     populateProductFilter();
-    renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
+    renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderDetailTable();
   });
   document.getElementById('productSelectNone').addEventListener('click', () => {
     state.products = new Set();
     populateProductFilter();
-    renderCards(); renderMedTable(); renderUnaccounted(); renderDetailTable();
+    renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderDetailTable();
   });
 
   document.getElementById('showAllBtn').addEventListener('click', () => {
