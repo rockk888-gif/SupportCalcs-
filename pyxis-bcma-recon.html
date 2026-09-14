@@ -993,16 +993,20 @@ function parsePyxisWorkbook(workbook) {
   }
   if (headerRowIdx === -1) throw new Error('Could not find the header row (expected columns like "Med ID", "Transaction Type", "ID"). Is this a Pyxis All Device Event Report?');
 
+  // Header lookups are case/whitespace-normalized so "Generic Name", "GENERIC NAME",
+  // and "Generic  Name" (double space) all resolve the same column.
+  const normHeader = h => (h || '').toString().trim().replace(/\s+/g, ' ').toLowerCase();
   const colIdx = {};
-  rows[headerRowIdx].forEach((h, i) => { if (h) colIdx[h.toString().trim()] = i; });
+  rows[headerRowIdx].forEach((h, i) => { if (h) colIdx[normHeader(h)] = i; });
   const required = ['Med ID', 'Transaction Type', 'Transaction Date/Time', 'ID'];
-  const missing = required.filter(c => !(c in colIdx));
+  const missing = required.filter(c => !(normHeader(c) in colIdx));
   if (missing.length) throw new Error('Missing expected columns in Pyxis file: ' + missing.join(', '));
+  const col = name => colIdx[normHeader(name)];
 
   // The drug-name column isn't part of the standard export and its header text
   // varies by facility -- try the common variants in order, first match wins.
   const GENERIC_NAME_HEADER_CANDIDATES = ['Generic Name', 'Generic_Name', 'GenericName', 'Drug Name', 'Item Name', 'Item Description', 'Medication', 'Medication Name', 'Med Name', 'Description', 'Product Name'];
-  const genericNameCol = GENERIC_NAME_HEADER_CANDIDATES.find(c => c in colIdx);
+  const genericNameIdx = GENERIC_NAME_HEADER_CANDIDATES.map(normHeader).map(c => colIdx[c]).find(idx => idx !== undefined);
 
   let currentPatient = null;
   const txns = [];
@@ -1010,17 +1014,17 @@ function parsePyxisWorkbook(workbook) {
     const row = rows[i];
     if (!row) continue;
     const patientName = row[0] ? row[0].toString().trim() : '';
-    const medId = row[colIdx['Med ID']];
-    const finId = row[colIdx['ID']];
+    const medId = row[col('Med ID')];
+    const finId = row[col('ID')];
     if (patientName && !medId && !finId) { currentPatient = patientName; continue; }
     if (medId || finId) {
       txns.push({
         PATIENT_NAME: currentPatient,
-        MED_ID: row[colIdx['Med ID']],
-        GENERIC_NAME: genericNameCol ? row[colIdx[genericNameCol]] : null,
-        TRANSACTION_TYPE: row[colIdx['Transaction Type']],
-        TRANSACTION_DT: row[colIdx['Transaction Date/Time']],
-        FIN: row[colIdx['ID']]
+        MED_ID: row[col('Med ID')],
+        GENERIC_NAME: genericNameIdx !== undefined ? row[genericNameIdx] : null,
+        TRANSACTION_TYPE: row[col('Transaction Type')],
+        TRANSACTION_DT: row[col('Transaction Date/Time')],
+        FIN: row[col('ID')]
       });
     }
   }
