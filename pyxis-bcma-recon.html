@@ -235,7 +235,7 @@
 
     <section>
       <h2>Pyxis Activity Summary — All Transaction Types</h2>
-      <div class="callout slate"><span>📋</span><div>Raw counts of every Pyxis transaction type seen for each drug in the loaded Pyxis file — Remove, Return, Waste, Restock/Refill, Override, Discrepancy, whatever your facility logs — independent of any BCMA match. This is a movement tally, not a discrepancy check: use it to spot overall drift (e.g. Removes far outpacing what's charted) before drilling into per-patient detail below.</div></div>
+      <div class="callout slate"><span>📋</span><div>Raw counts of every Pyxis transaction type seen, broken out by both drug name and Med ID — Remove, Return, Waste, Restock/Refill, Override, Discrepancy, whatever your facility logs — independent of any BCMA match. Med ID is shown separately since one generic drug can be stocked under more than one Med ID (different pockets/strengths); this is a movement tally, not a discrepancy check, so use it to spot overall drift (e.g. Removes far outpacing what's charted) before drilling into per-patient detail below.</div></div>
       <div style="overflow-x:auto;">
         <table id="pyxisActivityTable"></table>
       </div>
@@ -493,19 +493,25 @@ function renderUnaccounted() {
 // ever check Pyxis activity in service of a BCMA row that already exists, so a
 // Pyxis pull with no BCMA row at all is otherwise invisible.
 
+// Keyed by (Generic Name, Med ID) rather than one collapsed label, so a single
+// generic drug stocked under multiple Med IDs (different pockets/strengths)
+// shows up as separate, individually auditable rows instead of being merged.
 function buildPyxisActivitySummary(txns) {
-  const byDrug = {};
+  const byKey = {};
   const typeLabels = {};
   txns.forEach(t => {
-    const drugLabel = (t.GENERIC_NAME || t.MED_ID || '').toString().trim() || '(no Med ID)';
-    if (!pyxisDrugSelected(drugLabel)) return;
+    const genericName = (t.GENERIC_NAME || '').toString().trim();
+    const medId = (t.MED_ID || '').toString().trim();
+    const filterLabel = genericName || medId || '';
+    if (!pyxisDrugSelected(filterLabel)) return;
     const typeRaw = (t.TRANSACTION_TYPE || '').toString().trim() || '(unspecified)';
     const typeKey = typeRaw.toLowerCase();
     if (!typeLabels[typeKey]) typeLabels[typeKey] = typeRaw;
-    if (!byDrug[drugLabel]) byDrug[drugLabel] = {};
-    byDrug[drugLabel][typeKey] = (byDrug[drugLabel][typeKey] || 0) + 1;
+    const key = genericName + '||' + medId;
+    if (!byKey[key]) byKey[key] = { genericName: genericName || '(unspecified)', medId: medId || '(none)', counts: {} };
+    byKey[key].counts[typeKey] = (byKey[key].counts[typeKey] || 0) + 1;
   });
-  return { byDrug, typeLabels };
+  return { byKey, typeLabels };
 }
 
 function renderPyxisActivityTable() {
@@ -513,10 +519,13 @@ function renderPyxisActivityTable() {
     document.getElementById('pyxisActivityTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to see drug-level movement totals.</td></tr></tbody>';
     return;
   }
-  const { byDrug, typeLabels } = buildPyxisActivitySummary(PYXIS_TXNS);
+  const { byKey, typeLabels } = buildPyxisActivitySummary(PYXIS_TXNS);
   const typeKeys = Object.keys(typeLabels).sort((a, b) => typeLabels[a].localeCompare(typeLabels[b]));
-  const drugLabels = Object.keys(byDrug).sort();
-  if (drugLabels.length === 0) {
+  const keys = Object.keys(byKey).sort((a, b) => {
+    const A = byKey[a], B = byKey[b];
+    return A.genericName.localeCompare(B.genericName) || A.medId.localeCompare(B.medId);
+  });
+  if (keys.length === 0) {
     document.getElementById('pyxisActivityTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">No Pyxis activity for the drugs currently selected above.</td></tr></tbody>';
     return;
   }
@@ -524,21 +533,22 @@ function renderPyxisActivityTable() {
   const totalsByType = {};
   typeKeys.forEach(k => totalsByType[k] = 0);
   let grandTotal = 0;
-  const rows = drugLabels.map(drug => {
+  const rows = keys.map(key => {
+    const entry = byKey[key];
     let rowTotal = 0;
     const cells = typeKeys.map(k => {
-      const c = (byDrug[drug][k] || 0);
+      const c = (entry.counts[k] || 0);
       totalsByType[k] += c;
       rowTotal += c;
       return `<td class="center">${c || '<span class="muted">0</span>'}</td>`;
     }).join('');
     grandTotal += rowTotal;
-    return `<tr><td>${escapeHtml(drug)}</td>${cells}<td class="center"><b>${rowTotal}</b></td></tr>`;
+    return `<tr><td>${escapeHtml(entry.genericName)}</td><td class="mono">${escapeHtml(entry.medId)}</td>${cells}<td class="center"><b>${rowTotal}</b></td></tr>`;
   }).join('');
-  const totalRow = `<tr style="font-weight:700; border-top:2px solid #cbd5e1;"><td>TOTAL</td>${typeKeys.map(k => `<td class="center">${totalsByType[k]}</td>`).join('')}<td class="center">${grandTotal}</td></tr>`;
+  const totalRow = `<tr style="font-weight:700; border-top:2px solid #cbd5e1;"><td colspan="2">TOTAL</td>${typeKeys.map(k => `<td class="center">${totalsByType[k]}</td>`).join('')}<td class="center">${grandTotal}</td></tr>`;
 
   document.getElementById('pyxisActivityTable').innerHTML = `
-    <thead><tr><th>Drug (Pyxis)</th>${typeKeys.map(k => `<th class="center">${escapeHtml(typeLabels[k])}</th>`).join('')}<th class="center">Total</th></tr></thead>
+    <thead><tr><th>Drug Name</th><th>Med ID</th>${typeKeys.map(k => `<th class="center">${escapeHtml(typeLabels[k])}</th>`).join('')}<th class="center">Total</th></tr></thead>
     <tbody>${rows}${totalRow}</tbody>`;
 }
 
@@ -904,13 +914,17 @@ function exportToExcel() {
   let pyxisActivityRows = [{'Result': 'No Pyxis file loaded'}];
   if (pyxisActivity) {
     const typeKeys = Object.keys(pyxisActivity.typeLabels).sort((a,b) => pyxisActivity.typeLabels[a].localeCompare(pyxisActivity.typeLabels[b]));
-    const drugLabels = Object.keys(pyxisActivity.byDrug).sort();
+    const keys = Object.keys(pyxisActivity.byKey).sort((a,b) => {
+      const A = pyxisActivity.byKey[a], B = pyxisActivity.byKey[b];
+      return A.genericName.localeCompare(B.genericName) || A.medId.localeCompare(B.medId);
+    });
     const totalsByType = {}; typeKeys.forEach(k => totalsByType[k] = 0); let grandTotal = 0;
-    pyxisActivityRows = drugLabels.map(drug => {
-      const row = { 'Drug (Pyxis)': drug };
+    pyxisActivityRows = keys.map(key => {
+      const entry = pyxisActivity.byKey[key];
+      const row = { 'Drug Name': entry.genericName, 'Med ID': entry.medId };
       let rowTotal = 0;
       typeKeys.forEach(k => {
-        const c = pyxisActivity.byDrug[drug][k] || 0;
+        const c = entry.counts[k] || 0;
         row[pyxisActivity.typeLabels[k]] = c;
         totalsByType[k] += c;
         rowTotal += c;
@@ -920,7 +934,7 @@ function exportToExcel() {
       return row;
     });
     if (pyxisActivityRows.length) {
-      const totalRow = { 'Drug (Pyxis)': 'TOTAL' };
+      const totalRow = { 'Drug Name': 'TOTAL', 'Med ID': '' };
       typeKeys.forEach(k => totalRow[pyxisActivity.typeLabels[k]] = totalsByType[k]);
       totalRow['Total'] = grandTotal;
       pyxisActivityRows.push(totalRow);
