@@ -674,9 +674,14 @@ function renderRiskFlaggedPyxisTable() {
 // each has its own independent Beg/End sequence.
 function pocketKeyOf(t) {
   const medId = (t.MED_ID || '').toString().trim();
-  if (medId) return 'med::' + medId;
   const drw = (t.DRW_PKT || '').toString().trim();
   const drug = normText(t.GENERIC_NAME || t.MED_ID || '');
+  // A Med ID alone isn't a unique pocket -- the same drug/item can be stocked
+  // in more than one physical station (different units, different cabinets).
+  // Combine Med ID with the pocket location whenever both are present; only
+  // fall back to Med ID alone if this export never populates Drw|Pkt at all.
+  if (medId && drw) return 'medDrw::' + medId + '::' + drw;
+  if (medId) return 'med::' + medId;
   return drw ? ('drw::' + drw + '::' + drug) : ('nodrw::' + drug);
 }
 
