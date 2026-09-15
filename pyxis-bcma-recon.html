@@ -1017,9 +1017,10 @@ function parsePyxisWorkbook(workbook) {
     const medId = row[col('Med ID')];
     const finId = row[col('ID')];
     if (patientName && !medId && !finId) { currentPatient = patientName; continue; }
+    if (patientName) currentPatient = patientName;
     if (medId || finId) {
       txns.push({
-        PATIENT_NAME: currentPatient,
+        PATIENT_NAME: patientName || currentPatient,
         MED_ID: row[col('Med ID')],
         GENERIC_NAME: genericNameIdx !== undefined ? row[genericNameIdx] : null,
         TRANSACTION_TYPE: row[col('Transaction Type')],
