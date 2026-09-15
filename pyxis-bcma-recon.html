@@ -242,6 +242,22 @@
     </section>
 
     <section>
+      <h2>Pyxis On-Hand Balance (from Beg/End)</h2>
+      <div class="callout slate"><span>🧮</span><div>Chains each pocket's <b>Beg</b>/<b>End</b> counts chronologically to get a current on-hand total per drug — not a computed guess, this is the actual pocket count Pyxis itself recorded before and after each transaction. Dose-based events like Waste (measured in MCG/MG/ML, not a pocket count) don't carry a Beg/End and are correctly excluded rather than mixed in. Only available when the loaded Pyxis file includes these columns.</div></div>
+      <div style="overflow-x:auto;">
+        <table id="pyxisBalanceTable"></table>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="pyxisGapTitle">Pocket Balance Gaps</h2>
+      <div class="callout red"><span>⚠️</span><div>For each pocket, one transaction's End should equal the next transaction's Beg. A break here means the pocket's count changed by something not in this report — a transaction before the report's date range, or a genuinely unexplained change worth investigating.</div></div>
+      <div style="overflow-x:auto;">
+        <table id="pyxisGapTable"></table>
+      </div>
+    </section>
+
+    <section>
       <h2 id="unmatchedPyxisTitle">Pyxis Pulls With No BCMA Record</h2>
       <div class="callout red"><span>🚨</span><div>Every Pyxis <b>Remove</b> for a selected drug, checked for a matching BCMA Device Dispense (same ADM_ID/Med ID, or same FIN/patient+day and Generic Name if ADM_ID doesn't line up). A pull with nothing here means medication left the cabinet with no administration ever charted for it — the classic diversion signal, and the reverse of every other check on this page (those all start from BCMA and ask "does Pyxis confirm this?"; this one starts from Pyxis and asks "did this ever reach a patient's chart?").</div></div>
       <div style="overflow-x:auto;">
@@ -651,10 +667,117 @@ function renderRiskFlaggedPyxisTable() {
     <tbody>${rows.map(pyxisTxnRow).join('')}</tbody>`;
 }
 
+// A "pocket" is the physical drawer/pocket slot a drug is stocked in. Med ID
+// (when populated) is the most reliable identity for it; when it's blank,
+// fall back to the Drw|Sub Drw|Pkt location plus the drug label, since two
+// different pockets can hold the same drug and must be tracked separately --
+// each has its own independent Beg/End sequence.
+function pocketKeyOf(t) {
+  const medId = (t.MED_ID || '').toString().trim();
+  if (medId) return 'med::' + medId;
+  const drw = (t.DRW_PKT || '').toString().trim();
+  const drug = normText(t.GENERIC_NAME || t.MED_ID || '');
+  return drw ? ('drw::' + drw + '::' + drug) : ('nodrw::' + drug);
+}
+
+// Chains Beg->End chronologically per pocket to get a current on-hand count
+// and flag any break in the chain (one transaction's End should equal the
+// next one's Beg; a mismatch means something changed the count that isn't in
+// this file -- outside the report's date range, or genuinely unexplained).
+// Only transactions that carry a numeric Beg/End participate -- dose-based
+// events like Waste (measured in MCG/MG/ML, not a pocket count) don't have
+// Beg/End at all in a real Pyxis export and are correctly excluded.
+function buildPocketBalances(txns) {
+  const groups = {};
+  txns.forEach(t => {
+    const beg = parseFloat(t.BEG), end = parseFloat(t.END);
+    if (isNaN(beg) || isNaN(end)) return;
+    const label = (t.GENERIC_NAME || t.MED_ID || '').toString().trim();
+    if (!pyxisDrugSelected(label)) return;
+    const key = pocketKeyOf(t);
+    if (!groups[key]) groups[key] = { label: label || '(unspecified)', medId: t.MED_ID || '', drw: t.DRW_PKT || '', uom: t.BEGEND_UOM || '', txns: [] };
+    groups[key].txns.push({ ...t, _beg: beg, _end: end });
+  });
+
+  const balances = [];
+  const gaps = [];
+  Object.values(groups).forEach(g => {
+    g.txns.sort((a, b) => new Date(a.TRANSACTION_DT) - new Date(b.TRANSACTION_DT));
+    for (let i = 1; i < g.txns.length; i++) {
+      const prev = g.txns[i - 1], cur = g.txns[i];
+      if (prev._end !== cur._beg) {
+        gaps.push({ label: g.label, medId: g.medId, drw: g.drw, uom: g.uom, prevTxn: prev, curTxn: cur, diff: cur._beg - prev._end });
+      }
+    }
+    const last = g.txns[g.txns.length - 1];
+    balances.push({ label: g.label, medId: g.medId, drw: g.drw, uom: g.uom, currentBalance: last._end, asOf: last.TRANSACTION_DT });
+  });
+  return { balances, gaps };
+}
+
+function rollupBalancesByDrug(balances) {
+  const byDrug = {};
+  balances.forEach(b => {
+    const key = normText(b.label) + '::' + normText(b.uom);
+    if (!byDrug[key]) byDrug[key] = { label: b.label, uom: b.uom, total: 0, pockets: 0, asOf: b.asOf };
+    byDrug[key].total += b.currentBalance;
+    byDrug[key].pockets += 1;
+    if (new Date(b.asOf) > new Date(byDrug[key].asOf)) byDrug[key].asOf = b.asOf;
+  });
+  return Object.values(byDrug).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function renderPyxisBalanceTables() {
+  const balanceSection = document.getElementById('pyxisBalanceTable');
+  const gapSection = document.getElementById('pyxisGapTable');
+  const gapTitle = document.getElementById('pyxisGapTitle');
+  if (!PYXIS_TXNS) {
+    balanceSection.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to see on-hand balances.</td></tr></tbody>';
+    gapTitle.textContent = 'Pocket Balance Gaps';
+    gapSection.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to run this check.</td></tr></tbody>';
+    return;
+  }
+  const { balances, gaps } = buildPocketBalances(PYXIS_TXNS);
+  if (balances.length === 0) {
+    balanceSection.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">This Pyxis file has no Beg/End columns (or no numeric values in them) for the drugs selected above -- on-hand balance isn\'t available.</td></tr></tbody>';
+    gapTitle.textContent = 'Pocket Balance Gaps';
+    gapSection.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Not available without Beg/End data.</td></tr></tbody>';
+    return;
+  }
+
+  const rollup = rollupBalancesByDrug(balances);
+  balanceSection.innerHTML = `
+    <thead><tr><th>Drug</th><th class="center">Current On-Hand</th><th>Unit</th><th class="center">Pockets</th><th>As Of (latest pocket seen)</th></tr></thead>
+    <tbody>${rollup.map(r => `<tr>
+      <td>${escapeHtml(r.label)}</td>
+      <td class="center"><b>${r.total}</b></td>
+      <td>${escapeHtml(r.uom)}</td>
+      <td class="center">${r.pockets}</td>
+      <td>${escapeHtml(r.asOf)}</td>
+    </tr>`).join('')}</tbody>`;
+
+  gapTitle.textContent = `Pocket Balance Gaps (${gaps.length})`;
+  if (gaps.length === 0) {
+    gapSection.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ Every pocket\'s Beg/End chains continuously -- no unexplained gaps.</td></tr></tbody>';
+    return;
+  }
+  gapSection.innerHTML = `
+    <thead><tr><th>Drug</th><th>Med ID</th><th>Pocket</th><th>Previous Txn End</th><th>Next Txn Beg</th><th>Gap</th></tr></thead>
+    <tbody>${gaps.map(g => `<tr class="row-amber">
+      <td>${escapeHtml(g.label)}</td>
+      <td class="mono">${escapeHtml(g.medId)}</td>
+      <td class="mono">${escapeHtml(g.drw)}</td>
+      <td>${g.prevTxn._end} <span class="muted">@ ${escapeHtml(g.prevTxn.TRANSACTION_DT || '')}</span></td>
+      <td>${g.curTxn._beg} <span class="muted">@ ${escapeHtml(g.curTxn.TRANSACTION_DT || '')}</span></td>
+      <td><span class="badge amber">${g.diff > 0 ? '+' : ''}${g.diff}</span></td>
+    </tr>`).join('')}</tbody>`;
+}
+
 function renderPyxisSideViews() {
   renderPyxisActivityTable();
   renderUnmatchedPyxisTable();
   renderRiskFlaggedPyxisTable();
+  renderPyxisBalanceTables();
 }
 
 function populateUnitFilter() {
@@ -949,6 +1072,19 @@ function exportToExcel() {
     }
   }
 
+  const pocketData = PYXIS_TXNS ? buildPocketBalances(PYXIS_TXNS) : null;
+  const balanceRows = (!pocketData || pocketData.balances.length === 0) ? [{'Result': PYXIS_TXNS ? 'No Beg/End data available' : 'No Pyxis file loaded'}] :
+    rollupBalancesByDrug(pocketData.balances).map(r => ({
+      'Drug': r.label, 'Current On-Hand': r.total, 'Unit': r.uom, 'Pockets': r.pockets, 'As Of (latest pocket seen)': r.asOf
+    }));
+  const gapRows = (!pocketData || pocketData.balances.length === 0) ? [{'Result': PYXIS_TXNS ? 'No Beg/End data available' : 'No Pyxis file loaded'}] :
+    (pocketData.gaps.length ? pocketData.gaps.map(g => ({
+      'Drug': g.label, 'Med ID': g.medId, 'Pocket': g.drw,
+      'Previous Txn End': g.prevTxn._end, 'Previous Txn Time': g.prevTxn.TRANSACTION_DT || '',
+      'Next Txn Beg': g.curTxn._beg, 'Next Txn Time': g.curTxn.TRANSACTION_DT || '',
+      'Gap': g.diff
+    })) : [{'Result': "Every pocket's Beg/End chains continuously"}]);
+
   const unmatchedPulls = computeUnmatchedPyxisPulls();
   const unmatchedPullRows = unmatchedPulls === null ? [{'Result': 'No Pyxis file loaded'}] :
     (unmatchedPulls.length ? unmatchedPulls.map(t => ({
@@ -967,6 +1103,8 @@ function exportToExcel() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailSheetRows), 'Detail');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Drug Totals');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pyxisActivityRows), 'Pyxis Activity Summary');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(balanceRows), 'Pyxis On-Hand Balance');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(gapRows), 'Pyxis Balance Gaps');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unmatchedPullRows), 'Pyxis No BCMA Record');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(riskFlaggedRows), 'Pyxis Override-Discrepancy');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unaccountedRows.length ? unaccountedRows : [{'Result': 'Nothing unaccounted for'}]), 'Not Accounted For');
@@ -1008,6 +1146,15 @@ function parsePyxisWorkbook(workbook) {
   const GENERIC_NAME_HEADER_CANDIDATES = ['Generic Name', 'Generic_Name', 'GenericName', 'Med Description', 'Medication Description', 'Drug Name', 'Item Name', 'Item Description', 'Medication', 'Medication Name', 'Med Name', 'Description', 'Product Name', 'Brand Name'];
   const genericNameIdx = GENERIC_NAME_HEADER_CANDIDATES.map(normHeader).map(c => colIdx[c]).find(idx => idx !== undefined);
 
+  // Beg/End/Quantity aren't required -- when present they enable the on-hand
+  // balance and continuity check; when absent that section just doesn't render.
+  const begIdx = col('Beg');
+  const endIdx = col('End');
+  const qtyIdx = col('Quantity');
+  const qtyUomIdx = col('Qty UOM');
+  const begEndUomIdx = col('Beg/End UOM');
+  const drwPktIdx = col('Drw|Sub Drw|Pkt');
+
   let currentPatient = null;
   const txns = [];
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -1016,16 +1163,27 @@ function parsePyxisWorkbook(workbook) {
     const patientName = row[0] ? row[0].toString().trim() : '';
     const medId = row[col('Med ID')];
     const finId = row[col('ID')];
-    if (patientName && !medId && !finId) { currentPatient = patientName; continue; }
+    const transactionType = row[col('Transaction Type')];
+    // A pure "patient banner" row carries only the name and nothing else. Some
+    // exports put the name AND the first transaction on the same row instead --
+    // checking Transaction Type too (not just Med ID/FIN, which can both be
+    // blank on a real transaction) keeps that row from being mistaken for one.
+    if (patientName && !medId && !finId && !transactionType) { currentPatient = patientName; continue; }
     if (patientName) currentPatient = patientName;
-    if (medId || finId) {
+    if (medId || finId || transactionType) {
       txns.push({
         PATIENT_NAME: patientName || currentPatient,
-        MED_ID: row[col('Med ID')],
+        MED_ID: medId,
         GENERIC_NAME: genericNameIdx !== undefined ? row[genericNameIdx] : null,
-        TRANSACTION_TYPE: row[col('Transaction Type')],
+        TRANSACTION_TYPE: transactionType,
         TRANSACTION_DT: row[col('Transaction Date/Time')],
-        FIN: row[col('ID')]
+        FIN: finId,
+        DRW_PKT: drwPktIdx !== undefined ? row[drwPktIdx] : null,
+        BEG: begIdx !== undefined ? row[begIdx] : null,
+        END: endIdx !== undefined ? row[endIdx] : null,
+        QUANTITY: qtyIdx !== undefined ? row[qtyIdx] : null,
+        QTY_UOM: qtyUomIdx !== undefined ? row[qtyUomIdx] : null,
+        BEGEND_UOM: begEndUomIdx !== undefined ? row[begEndUomIdx] : null
       });
     }
   }
