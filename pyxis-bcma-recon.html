@@ -1005,7 +1005,7 @@ function parsePyxisWorkbook(workbook) {
 
   // The drug-name column isn't part of the standard export and its header text
   // varies by facility -- try the common variants in order, first match wins.
-  const GENERIC_NAME_HEADER_CANDIDATES = ['Generic Name', 'Generic_Name', 'GenericName', 'Drug Name', 'Item Name', 'Item Description', 'Medication', 'Medication Name', 'Med Name', 'Description', 'Product Name'];
+  const GENERIC_NAME_HEADER_CANDIDATES = ['Generic Name', 'Generic_Name', 'GenericName', 'Med Description', 'Medication Description', 'Drug Name', 'Item Name', 'Item Description', 'Medication', 'Medication Name', 'Med Name', 'Description', 'Product Name', 'Brand Name'];
   const genericNameIdx = GENERIC_NAME_HEADER_CANDIDATES.map(normHeader).map(c => colIdx[c]).find(idx => idx !== undefined);
 
   let currentPatient = null;
