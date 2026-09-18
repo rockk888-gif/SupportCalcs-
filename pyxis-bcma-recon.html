@@ -122,6 +122,19 @@
   section { background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 18px; margin-bottom: 18px; }
   section h2 { font-size: 15px; margin: 0 0 12px 0; }
 
+  .band-header { margin: 28px 0 14px 0; padding-bottom: 10px; border-bottom: 2px solid #cbd5e1; }
+  .band-header:first-of-type { margin-top: 8px; }
+  .band-header h2 { font-size: 17px; margin: 0 0 4px 0; color: #0f172a; }
+  .band-header .band-desc { font-size: 12.5px; color: #64748b; line-height: 1.5; }
+  .band-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; vertical-align: middle; margin-left: 8px; }
+  .band-badge.recon { background: #dbeafe; color: #1e40af; }
+  .band-badge.inventory { background: #ccfbf1; color: #0f766e; }
+
+  .pyxis-check-block { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: #fafbfc; }
+  .pyxis-check-block:last-child { margin-bottom: 0; }
+  .pyxis-check-verdict { font-size: 12.5px; margin-bottom: 4px; }
+  .pyxis-check-evidence { font-size: 11px; color: #94a3b8; font-family: ui-monospace, "SF Mono", Consolas, monospace; padding-top: 4px; border-top: 1px dashed #e2e8f0; }
+
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th { text-align: left; padding: 8px 10px; background: #f8fafc; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; white-space: nowrap; cursor: pointer; }
   th:hover { background: #f1f5f9; }
@@ -223,16 +236,58 @@
 
   <div id="emptyState" style="text-align:center; padding:40px 20px; color:#94a3b8; background:white; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:20px;">
     <div style="font-size:28px; margin-bottom:8px;">👆</div>
-    <div style="font-size:14px;">Drop your BCMA reconciliation export above to get started. The Pyxis report is optional and can be added anytime for verification.</div>
+    <div style="font-size:14px;">Drop a BCMA export above for billing reconciliation, a Pyxis export for inventory analysis, or both for full cross-checking — either one on its own is enough to get started.</div>
   </div>
 
   <div id="mainContent" style="display:none;">
-    <div class="cards" id="cards"></div>
+    <div id="cardsWrap">
+      <div class="cards" id="cards"></div>
+    </div>
+
+    <div class="band-header">
+      <h2>BCMA ↔ Pyxis Reconciliation<span class="band-badge recon">Reconciliation</span></h2>
+      <div class="band-desc" id="reconBandDesc"></div>
+    </div>
 
     <section>
       <h2>Drug Totals — Dispensed, Charged, Returned, Credited</h2>
       <table class="med-table" id="medTable"></table>
     </section>
+
+    <section>
+      <h2 id="unaccountedTitle">Not Accounted For</h2>
+      <table id="unaccountedTable"></table>
+    </section>
+
+    <section>
+      <h2 id="crossFinWarningTitle">Cross-FIN Groups Needing Review</h2>
+      <div class="callout amber"><span>🔀</span><div>Same patient, drug, day, and unit, split across more than two FINs, or where the dispense/charge activity across the linked FINs doesn't net to zero. These are <b>not</b> auto-resolved — pairing them automatically risks silently clearing a real gap, so they need a person to confirm which FIN(s) actually explain which. Rows tagged <b>Name-only (weak ID)</b> had no EDIPI/MRN to group on and were matched by patient name alone — verify these aren't two different patients who happen to share a name.</div></div>
+      <div style="overflow-x:auto;">
+        <table id="crossFinWarningTable"></table>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="detailTitle">Full FIN-Level Detail</h2>
+      <div id="resolutionSummary" style="margin-bottom:12px;"></div>
+      <div style="overflow-x:auto;">
+        <table id="detailTable"></table>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="unmatchedPyxisTitle">Pyxis Pulls With No BCMA Record</h2>
+      <div class="callout red"><span>🚨</span><div>Every Pyxis <b>Remove</b> for a selected drug, checked for a matching BCMA Device Dispense (same ADM_ID/Med ID, or same FIN/patient+day and Generic Name if ADM_ID doesn't line up). A pull with nothing here means medication left the cabinet with no administration ever charted for it — the classic diversion signal, and the reverse of every other check on this page (those all start from BCMA and ask "does Pyxis confirm this?"; this one starts from Pyxis and asks "did this ever reach a patient's chart?"). Needs both files loaded — a Pyxis pull can only be called unexplained once there's a BCMA record it could have matched against.</div></div>
+      <div id="dateRangeNotice_unmatched"></div>
+      <div style="overflow-x:auto;">
+        <table id="unmatchedPyxisTable"></table>
+      </div>
+    </section>
+
+    <div class="band-header">
+      <h2>Pyxis Inventory Analysis<span class="band-badge inventory">Inventory</span></h2>
+      <div class="band-desc">Reads the Pyxis file on its own — no BCMA data involved, and no BCMA file is required for anything in this section. These are movement/on-hand checks against Pyxis's own records, not a cross-check against what was charted.</div>
+    </div>
 
     <section>
       <h2>Pyxis Activity Summary — All Transaction Types</h2>
@@ -259,15 +314,6 @@
     </section>
 
     <section>
-      <h2 id="unmatchedPyxisTitle">Pyxis Pulls With No BCMA Record</h2>
-      <div class="callout red"><span>🚨</span><div>Every Pyxis <b>Remove</b> for a selected drug, checked for a matching BCMA Device Dispense (same ADM_ID/Med ID, or same FIN/patient+day and Generic Name if ADM_ID doesn't line up). A pull with nothing here means medication left the cabinet with no administration ever charted for it — the classic diversion signal, and the reverse of every other check on this page (those all start from BCMA and ask "does Pyxis confirm this?"; this one starts from Pyxis and asks "did this ever reach a patient's chart?").</div></div>
-      <div id="dateRangeNotice_unmatched"></div>
-      <div style="overflow-x:auto;">
-        <table id="unmatchedPyxisTable"></table>
-      </div>
-    </section>
-
-    <section>
       <h2 id="riskFlaggedPyxisTitle">Other Flagged Pyxis Activity — Override / Discrepancy / Unrecognized</h2>
       <div class="callout amber"><span>🚩</span><div>Includes explicit <b>Override</b> and <b>Discrepancy</b> transactions, plus any transaction type this tool doesn't otherwise recognize (e.g. Wrong item, Transfer to/from patient, My Items issue to/from patient — real Pyxis transaction types that simply haven't shown up in this facility's data before). An unrecognized type isn't automatically a problem — it may just be a legitimate workflow this tool hasn't been taught about yet — but it's surfaced here rather than silently absent, so it gets a look before being dismissed.</div></div>
       <div style="overflow-x:auto;">
@@ -280,27 +326,6 @@
       <div class="callout slate"><span>↔️</span><div><b>Internal Movement</b> (Destock, Reallocate) moves product between cabinets/locations without it ever reaching a patient — excluded from every reconciliation check above since there's no BCMA event that could confirm it. <b>Patient Transfer</b> (My Items transfer from/to user) re-attributes a med already pulled under one patient to a different patient (e.g. a surgery-cart scenario) rather than removing anything new from the cabinet — a BCMA gap that lines up with one of these transfers may have a benign explanation rather than being a real discrepancy, so check here before treating it as unaccounted for.</div></div>
       <div style="overflow-x:auto;">
         <table id="internalMovementTable"></table>
-      </div>
-    </section>
-
-    <section>
-      <h2 id="unaccountedTitle">Not Accounted For</h2>
-      <table id="unaccountedTable"></table>
-    </section>
-
-    <section>
-      <h2 id="crossFinWarningTitle">Cross-FIN Groups Needing Review</h2>
-      <div class="callout amber"><span>🔀</span><div>Same patient, drug, day, and unit, split across more than two FINs, or where the dispense/charge activity across the linked FINs doesn't net to zero. These are <b>not</b> auto-resolved — pairing them automatically risks silently clearing a real gap, so they need a person to confirm which FIN(s) actually explain which. Rows tagged <b>Name-only (weak ID)</b> had no EDIPI/MRN to group on and were matched by patient name alone — verify these aren't two different patients who happen to share a name.</div></div>
-      <div style="overflow-x:auto;">
-        <table id="crossFinWarningTable"></table>
-      </div>
-    </section>
-
-    <section>
-      <h2 id="detailTitle">Full FIN-Level Detail</h2>
-      <div id="resolutionSummary" style="margin-bottom:12px;"></div>
-      <div style="overflow-x:auto;">
-        <table id="detailTable"></table>
       </div>
     </section>
   </div>
@@ -528,12 +553,30 @@ function computeMedSummary(data) {
   }));
 }
 
+// Shown/enabled based on EITHER file being loaded, not just BCMA -- Pyxis
+// inventory analysis (Activity Summary, On-Hand Balance, Balance Gaps, Other
+// Flagged Activity, Internal Movement) reads only the Pyxis file and has no
+// need for a BCMA export at all, so it shouldn't be hidden behind one.
+function updateMainVisibility() {
+  const hasAnyData = REPORT.length > 0 || PYXIS_TXNS !== null;
+  document.getElementById('emptyState').style.display = hasAnyData ? 'none' : 'block';
+  document.getElementById('mainContent').style.display = hasAnyData ? 'block' : 'none';
+  document.getElementById('toolbar').style.display = hasAnyData ? 'flex' : 'none';
+  // Status cards are pure BCMA reconciliation counts -- with no BCMA file
+  // loaded they'd just be a row of zeros, which reads as "nothing wrong"
+  // rather than "nothing loaded", so hide them entirely until there's data.
+  document.getElementById('cardsWrap').style.display = REPORT.length > 0 ? 'block' : 'none';
+  const reconDesc = document.getElementById('reconBandDesc');
+  if (reconDesc) {
+    reconDesc.textContent = REPORT.length > 0
+      ? 'Compares what BCMA charted against what Pyxis confirms (fuller once a Pyxis file is also loaded).'
+      : 'Requires a BCMA export -- drop one into the first dropzone above to see billing reconciliation.';
+  }
+}
+
 function render() {
-  const hasData = REPORT.length > 0;
-  document.getElementById('emptyState').style.display = hasData ? 'none' : 'block';
-  document.getElementById('mainContent').style.display = hasData ? 'block' : 'none';
-  document.getElementById('toolbar').style.display = hasData ? 'flex' : 'none';
-  if (!hasData) { renderCallouts(); return; }
+  updateMainVisibility();
+  if (REPORT.length === 0 && PYXIS_TXNS === null) { renderCallouts(); return; }
   populateProductFilter();
   renderCallouts();
   renderCards();
@@ -580,6 +623,10 @@ function renderCards() {
 }
 
 function renderMedTable() {
+  if (REPORT.length === 0) {
+    document.getElementById('medTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a BCMA export above to see drug totals.</td></tr></tbody>';
+    return;
+  }
   const summary = computeMedSummary(scopedByProduct());
   let rows = summary.map(m => {
     const gap = m.netDispensed - m.netCharged;
@@ -614,6 +661,11 @@ function renderMedTable() {
 }
 
 function renderUnaccounted() {
+  if (REPORT.length === 0) {
+    document.getElementById('unaccountedTitle').textContent = 'Not Accounted For';
+    document.getElementById('unaccountedTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a BCMA export above to run this check.</td></tr></tbody>';
+    return;
+  }
   const unresolved = scopedByProduct().filter(r => !r.linkedFin && r.netDispense !== r.netCharge && r.status !== 'No Activity (Fully Returned/Credited)');
   document.getElementById('unaccountedTitle').textContent = `Not Accounted For (${unresolved.length} FIN${unresolved.length===1?'':'s'})`;
   if (unresolved.length === 0) {
@@ -642,6 +694,11 @@ function renderUnaccounted() {
 function renderCrossFinWarnings() {
   const title = document.getElementById('crossFinWarningTitle');
   const table = document.getElementById('crossFinWarningTable');
+  if (REPORT.length === 0) {
+    title.textContent = 'Cross-FIN Groups Needing Review';
+    table.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a BCMA export above to run this check.</td></tr></tbody>';
+    return;
+  }
   const rows = CROSS_FIN_WARNINGS.filter(w => pyxisDrugSelected(w.drug));
   title.textContent = `Cross-FIN Groups Needing Review (${rows.length})`;
   if (rows.length === 0) {
@@ -804,6 +861,21 @@ function renderDateRangeNotice() {
 }
 
 function renderUnmatchedPyxisTable() {
+  if (!PYXIS_TXNS) {
+    document.getElementById('dateRangeNotice_unmatched').innerHTML = '';
+    document.getElementById('unmatchedPyxisTitle').textContent = 'Pyxis Pulls With No BCMA Record';
+    document.getElementById('unmatchedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to run this check.</td></tr></tbody>';
+    return;
+  }
+  // Every Remove would show as "unmatched" with no BCMA data to check against at
+  // all -- that's not a diversion finding, it's just an incomplete comparison, so
+  // it needs a distinct message rather than flooding the table with false alarms.
+  if (REPORT.length === 0) {
+    document.getElementById('dateRangeNotice_unmatched').innerHTML = '';
+    document.getElementById('unmatchedPyxisTitle').textContent = 'Pyxis Pulls With No BCMA Record';
+    document.getElementById('unmatchedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a BCMA export too -- this check needs both files, since a Pyxis pull can only be called unexplained once there\'s a BCMA record it could have matched against.</td></tr></tbody>';
+    return;
+  }
   const rows = computeUnmatchedPyxisPulls();
   const noticeHtml = renderDateRangeNotice();
   document.getElementById('dateRangeNotice_unmatched').innerHTML = noticeHtml;
@@ -1146,18 +1218,27 @@ function renderResolutionSummary() {
     : 'Full FIN-Level Detail';
 }
 
+// Renders one Dispense/Return check as its own bordered block, with the
+// verdict (status + match basis + any risk badge) as one clear line up top
+// and the raw Pyxis activity dump visually demoted below a divider -- keeping
+// "here's the answer" and "here's the supporting evidence" from running
+// together into one dense paragraph.
 function pyxisCheckLine(label, check) {
   if (!check) return '';
-  const basisNote = check.basis ? ` <span class="muted">(matched by ${check.basis})</span>` : '';
+  const statusCls = check.status === 'Verified' ? 'green' : check.status === 'Discrepancy' ? 'red' : 'slate';
+  const basisNote = check.basis ? ` <span class="muted">matched by ${escapeHtml(check.basis)}</span>` : '';
   const riskNote = check.fuzzyRisk === 'formulation'
     ? ` <span class="badge amber">⚠ formulation/salt differs — verify</span>`
     : check.fuzzyRisk === 'classname'
       ? ` <span class="badge red">⚠ class-level match only — confirm exact product</span>`
       : '';
-  const seen = (check.seenTxns && check.seenTxns.length)
-    ? `<div class="muted mono" style="margin:2px 0 8px 0;">Pyxis activity seen: ${check.seenTxns.map(escapeHtml).join(' &nbsp;|&nbsp; ')}</div>`
-    : '<br>';
-  return `${label}: <b>${escapeHtml(check.status)}</b>${basisNote}${riskNote}${seen}`;
+  const evidence = (check.seenTxns && check.seenTxns.length)
+    ? `<div class="pyxis-check-evidence">Pyxis activity seen: ${check.seenTxns.map(escapeHtml).join(' &nbsp;|&nbsp; ')}</div>`
+    : '';
+  return `<div class="pyxis-check-block">
+    <div class="pyxis-check-verdict">${escapeHtml(label)}: <span class="badge ${statusCls}">${escapeHtml(check.status)}</span>${basisNote}${riskNote}</div>
+    ${evidence}
+  </div>`;
 }
 
 function renderDetailTable() {
@@ -1219,7 +1300,7 @@ function renderDetailTable() {
       <th data-sort="status">Status${arrow('status')}</th>
       <th class="no-print"></th>
     </tr></thead>
-    <tbody>${body || '<tr><td colspan="10" style="text-align:center; padding:20px; color:#94a3b8;">No FINs match your filters.</td></tr>'}</tbody>
+    <tbody>${body || `<tr><td colspan="10" style="text-align:center; padding:20px; color:#94a3b8;">${REPORT.length === 0 ? 'Load a BCMA export above to see FIN-level detail.' : 'No FINs match your filters.'}</td></tr>`}</tbody>
   `;
 
   document.querySelectorAll('#detailTable th[data-sort]').forEach(th => {
@@ -1356,8 +1437,9 @@ function exportToExcel() {
       'Pocket ID Confirmed': g.unverified ? 'No — possible false gap, drug name only (no Med ID/Drw/Pkt)' : 'Yes'
     })) : [{'Result': "Every pocket's Beg/End chains continuously"}]);
 
-  const unmatchedPulls = computeUnmatchedPyxisPulls();
+  const unmatchedPulls = !PYXIS_TXNS ? null : (REPORT.length === 0 ? 'needs-bcma' : computeUnmatchedPyxisPulls());
   const unmatchedPullRows = unmatchedPulls === null ? [{'Result': 'No Pyxis file loaded'}] :
+    unmatchedPulls === 'needs-bcma' ? [{'Result': 'Load a BCMA export too -- this check needs both files'}] :
     (unmatchedPulls.length ? unmatchedPulls.map(t => ({
       'Patient': t.PATIENT_NAME || '', 'FIN': t.FIN || '', 'Med ID': t.MED_ID || '',
       'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || '',
@@ -1724,14 +1806,16 @@ function handlePyxisFile(file) {
         PYXIS_DATE_RANGE = null;
         recomputePyxisStatus();
         resetPyxisDropzoneUI();
+        updateMainVisibility();
         renderCallouts();
         populateProductFilter();
-        renderPyxisSideViews();
+        renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderCrossFinWarnings();
         renderDetailTable();
       });
+      updateMainVisibility();
       renderCallouts();
       populateProductFilter();
-      renderPyxisSideViews();
+      renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderCrossFinWarnings();
       renderDetailTable();
     } catch (err) {
       alert('Could not parse this Pyxis file.\n\n' + err.message);
