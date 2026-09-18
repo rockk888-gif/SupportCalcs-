@@ -130,6 +130,12 @@
   .band-badge.recon { background: #dbeafe; color: #1e40af; }
   .band-badge.inventory { background: #ccfbf1; color: #0f766e; }
 
+  .mode-indicator { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .mode-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .mode-pill.recon { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+  .mode-pill.inventory { background: #ccfbf1; color: #0f766e; border: 1px solid #99f6e4; }
+  .mode-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
   .pyxis-check-block { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: #fafbfc; }
   .pyxis-check-block:last-child { margin-bottom: 0; }
   .pyxis-check-verdict { font-size: 12.5px; margin-bottom: 4px; }
@@ -184,6 +190,7 @@
   <header>
     <h1>Pyxis / BCMA Drug Tracking &amp; Reconciliation Report</h1>
     <div class="subtitle">BCMA device dispense/return and charge/credit activity, cross-checked against Pyxis cabinet pulls and other transaction types — any formulary drug, filterable to a watch list</div>
+    <div id="modeIndicator"></div>
   </header>
 
   <div class="dropzone-row">
@@ -557,6 +564,25 @@ function computeMedSummary(data) {
 // inventory analysis (Activity Summary, On-Hand Balance, Balance Gaps, Other
 // Flagged Activity, Internal Movement) reads only the Pyxis file and has no
 // need for a BCMA export at all, so it shouldn't be hidden behind one.
+// A single glanceable indicator of which mode(s) are active, reusing the same
+// blue/teal colors already established for the Reconciliation/Inventory band
+// badges rather than introducing a third color meaning on top of the status
+// colors (red/amber/green/blue) already used heavily throughout the tables.
+// Doubles as useful context on a shared screenshot where the dropzones (and
+// therefore which files were actually loaded) aren't visible.
+function renderModeIndicator() {
+  const el = document.getElementById('modeIndicator');
+  if (!el) return;
+  const hasBcma = REPORT.length > 0;
+  const hasPyxis = PYXIS_TXNS !== null;
+  if (!hasBcma && !hasPyxis) { el.innerHTML = ''; return; }
+  const pills = [];
+  if (hasBcma) pills.push('<span class="mode-pill recon"><span class="dot"></span>BCMA Reconciliation</span>');
+  if (hasPyxis) pills.push('<span class="mode-pill inventory"><span class="dot"></span>Pyxis Inventory</span>');
+  const comboNote = (hasBcma && hasPyxis) ? ' <span class="muted" style="font-size:12px;">— cross-checking both</span>' : '';
+  el.innerHTML = `<div class="mode-indicator">${pills.join('')}${comboNote}</div>`;
+}
+
 function updateMainVisibility() {
   const hasAnyData = REPORT.length > 0 || PYXIS_TXNS !== null;
   document.getElementById('emptyState').style.display = hasAnyData ? 'none' : 'block';
@@ -572,6 +598,7 @@ function updateMainVisibility() {
       ? 'Compares what BCMA charted against what Pyxis confirms (fuller once a Pyxis file is also loaded).'
       : 'Requires a BCMA export -- drop one into the first dropzone above to see billing reconciliation.';
   }
+  renderModeIndicator();
 }
 
 function render() {
