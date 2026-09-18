@@ -97,6 +97,7 @@
   .callout.blue { background: var(--blue-bg); border-color: var(--blue-border); color: #1e3a8a; }
   .callout.emerald { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
   .callout.red { background: var(--red-bg); border-color: var(--red-border); color: #7f1d1d; }
+  .callout.amber { background: var(--amber-bg); border-color: var(--amber-border); color: #78350f; }
   .callout b { font-weight: 700; }
 
   .cards {
@@ -187,7 +188,7 @@
       <div id="pyxisDropzone">
         <div class="icon">🛡️</div>
         <div><b>Drag and drop</b> a Pyxis device event report here</div>
-        <div class="hint">The standard "All Device Events Report" export grouped by patient, with Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns. Optional: Generic Name (used as the fuzzy fallback when Med ID doesn't exactly match BCMA's ADM_ID — Pyxis doesn't report NDCs).</div>
+        <div class="hint">The standard "All Device Events Report" export — either "Group By: Patient" or "No Grouping (Excel Optimized)" layouts are supported. Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns required. Optional: Generic Name/Med Description (used as the fuzzy fallback when Med ID doesn't exactly match BCMA's ADM_ID — Pyxis doesn't report NDCs).</div>
         <input type="file" id="pyxisFileInput" accept=".xlsx,.xls" style="display:none">
       </div>
     </div>
@@ -235,7 +236,7 @@
 
     <section>
       <h2>Pyxis Activity Summary — All Transaction Types</h2>
-      <div class="callout slate"><span>📋</span><div>Raw counts of every Pyxis transaction type seen, broken out by both drug name and Med ID — Remove, Return, Waste, Restock/Refill, Override, Discrepancy, whatever your facility logs — independent of any BCMA match. Med ID is shown separately since one generic drug can be stocked under more than one Med ID (different pockets/strengths); this is a movement tally, not a discrepancy check, so use it to spot overall drift (e.g. Removes far outpacing what's charted) before drilling into per-patient detail below.</div></div>
+      <div class="callout slate"><span>📋</span><div>Raw counts of every Pyxis transaction type seen, broken out by both drug name and Med ID — Remove, Return, Waste, Restock/Refill, Override, Discrepancy, Destock, whatever your facility logs — independent of any BCMA match. Med ID is shown separately since one generic drug can be stocked under more than one Med ID (different pockets/strengths); this is a movement tally, not a discrepancy check, so use it to spot overall drift (e.g. Removes far outpacing what's charted) before drilling into per-patient detail below. Internal Movement, Patient Transfer, and Override/Discrepancy/Unrecognized activity each have their own dedicated section further down.</div></div>
       <div style="overflow-x:auto;">
         <table id="pyxisActivityTable"></table>
       </div>
@@ -243,7 +244,7 @@
 
     <section>
       <h2>Pyxis On-Hand Balance (from Beg/End)</h2>
-      <div class="callout slate"><span>🧮</span><div>Chains each pocket's <b>Beg</b>/<b>End</b> counts chronologically to get a current on-hand total per drug — not a computed guess, this is the actual pocket count Pyxis itself recorded before and after each transaction. Dose-based events like Waste (measured in MCG/MG/ML, not a pocket count) don't carry a Beg/End and are correctly excluded rather than mixed in. Only available when the loaded Pyxis file includes these columns.</div></div>
+      <div class="callout slate"><span>🧮</span><div>Chains each pocket's <b>Beg</b>/<b>End</b> counts chronologically to get a current on-hand total per drug — not a computed guess, this is the actual pocket count Pyxis itself recorded before and after each transaction. Dose-based events like Waste (measured in MCG/MG/ML, not a pocket count) don't carry a Beg/End and are correctly excluded rather than mixed in. Pocket identity uses Med ID <b>and</b> Drw/Sub Drw/Pkt location together whenever both are available — the same Med ID can be stocked in more than one physical location at once, so location is needed to tell those apart; Med ID alone is used only when location is missing, and drug name alone (tagged <b>unconfirmed pocket ID</b>) only when both are missing. <b>Empty return bin</b> activity is excluded from this chain entirely — it tracks a separate return-bin compartment's own count, not the main dispensing pocket's, and would otherwise generate false gaps every time it's interleaved with real stock activity. Only available when the loaded Pyxis file includes Beg/End columns.</div></div>
       <div style="overflow-x:auto;">
         <table id="pyxisBalanceTable"></table>
       </div>
@@ -260,21 +261,39 @@
     <section>
       <h2 id="unmatchedPyxisTitle">Pyxis Pulls With No BCMA Record</h2>
       <div class="callout red"><span>🚨</span><div>Every Pyxis <b>Remove</b> for a selected drug, checked for a matching BCMA Device Dispense (same ADM_ID/Med ID, or same FIN/patient+day and Generic Name if ADM_ID doesn't line up). A pull with nothing here means medication left the cabinet with no administration ever charted for it — the classic diversion signal, and the reverse of every other check on this page (those all start from BCMA and ask "does Pyxis confirm this?"; this one starts from Pyxis and asks "did this ever reach a patient's chart?").</div></div>
+      <div id="dateRangeNotice_unmatched"></div>
       <div style="overflow-x:auto;">
         <table id="unmatchedPyxisTable"></table>
       </div>
     </section>
 
     <section>
-      <h2 id="riskFlaggedPyxisTitle">Other Flagged Pyxis Activity — Override / Discrepancy</h2>
+      <h2 id="riskFlaggedPyxisTitle">Other Flagged Pyxis Activity — Override / Discrepancy / Unrecognized</h2>
+      <div class="callout amber"><span>🚩</span><div>Includes explicit <b>Override</b> and <b>Discrepancy</b> transactions, plus any transaction type this tool doesn't otherwise recognize (e.g. Wrong item, Transfer to/from patient, My Items issue to/from patient — real Pyxis transaction types that simply haven't shown up in this facility's data before). An unrecognized type isn't automatically a problem — it may just be a legitimate workflow this tool hasn't been taught about yet — but it's surfaced here rather than silently absent, so it gets a look before being dismissed.</div></div>
       <div style="overflow-x:auto;">
         <table id="riskFlaggedPyxisTable"></table>
       </div>
     </section>
 
     <section>
+      <h2>Internal Movement &amp; Patient-to-Patient Transfers</h2>
+      <div class="callout slate"><span>↔️</span><div><b>Internal Movement</b> (Destock, Reallocate) moves product between cabinets/locations without it ever reaching a patient — excluded from every reconciliation check above since there's no BCMA event that could confirm it. <b>Patient Transfer</b> (My Items transfer from/to user) re-attributes a med already pulled under one patient to a different patient (e.g. a surgery-cart scenario) rather than removing anything new from the cabinet — a BCMA gap that lines up with one of these transfers may have a benign explanation rather than being a real discrepancy, so check here before treating it as unaccounted for.</div></div>
+      <div style="overflow-x:auto;">
+        <table id="internalMovementTable"></table>
+      </div>
+    </section>
+
+    <section>
       <h2 id="unaccountedTitle">Not Accounted For</h2>
       <table id="unaccountedTable"></table>
+    </section>
+
+    <section>
+      <h2 id="crossFinWarningTitle">Cross-FIN Groups Needing Review</h2>
+      <div class="callout amber"><span>🔀</span><div>Same patient, drug, day, and unit, split across more than two FINs, or where the dispense/charge activity across the linked FINs doesn't net to zero. These are <b>not</b> auto-resolved — pairing them automatically risks silently clearing a real gap, so they need a person to confirm which FIN(s) actually explain which. Rows tagged <b>Name-only (weak ID)</b> had no EDIPI/MRN to group on and were matched by patient name alone — verify these aren't two different patients who happen to share a name.</div></div>
+      <div style="overflow-x:auto;">
+        <table id="crossFinWarningTable"></table>
+      </div>
     </section>
 
     <section>
@@ -293,27 +312,42 @@
 <script>
 // ============ DATA (loaded fresh each session via drag & drop — nothing embedded) ============
 let REPORT = [];
+let CROSS_FIN_WARNINGS = [];
+let BCMA_DATE_RANGE = null;
+let PYXIS_DATE_RANGE = null;
 
 const STATUS_META = {
   'Missing Charge(s)': {cls:'red', order:0},
   'No Dispense on File': {cls:'amber', order:1},
-  'Extra Charge / Review': {cls:'red', order:2},
-  'No Activity (Fully Returned/Credited)': {cls:'slate', order:3},
-  'Resolved (Cross-FIN Match)': {cls:'teal', order:4},
-  'Balanced': {cls:'green', order:5},
-  'Balanced (NDC Mismatch)': {cls:'blue', order:6}
+  'Charged — Pharmacy-Only Activity (No Device Dispense)': {cls:'amber', order:2},
+  'Extra Charge / Review': {cls:'red', order:3},
+  'No Activity (Fully Returned/Credited)': {cls:'slate', order:4},
+  'Resolved (Cross-FIN Match)': {cls:'teal', order:5},
+  'Balanced': {cls:'green', order:6},
+  'Balanced (NDC Mismatch)': {cls:'blue', order:7}
 };
-const UNRESOLVED_STATUSES = new Set(['Missing Charge(s)', 'No Dispense on File', 'Extra Charge / Review']);
+const UNRESOLVED_STATUSES = new Set(['Missing Charge(s)', 'No Dispense on File', 'Extra Charge / Review', 'Charged — Pharmacy-Only Activity (No Device Dispense)']);
 
 // Pyxis transaction-type text varies a lot by facility -- "Remove" vs "Remove
 // CANCELLED", a plain "Return" vs "Return to bin" -- so matching is keyword-based
 // (substring match on stripped/lowercased text) rather than exact-string, with
 // explicit exclusions so an aborted/cancelled transaction never counts as a real
 // one. Adjust the include lists if your facility's vocabulary differs further.
+//
+// 'internalMovement' (Destock, Reallocate) and 'patientTransfer' (My Items transfer
+// from/to user) are tracked in their own buckets rather than folded into
+// remove/return, since neither represents a patient-facing dispense or a return to
+// stock -- Destock/Reallocate move product between cabinets/locations without ever
+// reaching a patient, and My Items transfer re-attributes a med already pulled
+// under one patient to a different patient (e.g. a surgery-cart scenario) rather
+// than removing anything new from the cabinet. Both would be wrongly counted as
+// diversion signals if left in the remove/return buckets.
 const PYXIS_TYPE_SPECS = {
   remove: { include: ['remove'], exclude: ['cancel'] },
   return: { include: ['return', 'restock', 'refill', 'waste'], exclude: ['cancel'] },
-  risk: { include: ['override', 'discrepancy'], exclude: [] }
+  risk: { include: ['override', 'discrepancy'], exclude: [] },
+  internalMovement: { include: ['destock', 'reallocate'], exclude: ['cancel'] },
+  patientTransfer: { include: ['myitemstransferfromuser', 'myitemstransfertouser'], exclude: ['cancel'] }
 };
 
 function pyxisTypeMatchesSpec(rawType, specKey) {
@@ -324,12 +358,46 @@ function pyxisTypeMatchesSpec(rawType, specKey) {
   return spec.include.some(inc => norm.includes(inc));
 }
 
-// BCMA device-side event types mapped to the Pyxis transaction-type spec that
-// should corroborate them.
-const PYXIS_EXPECTED = {
-  'Device Dispense': 'remove',
-  'Device Return': 'return'
-};
+// A transaction is "known" if it matches any of the specs above, OR if it's one of
+// the routine pharmacy/administrative housekeeping types below -- these move stock
+// or verify counts but never represent a patient-facing event, so they're correctly
+// absent from remove/return/risk/internalMovement/patientTransfer, but they are NOT
+// unrecognized or suspicious either. Without this list, every one of these ordinary,
+// high-volume housekeeping types would incorrectly flag as "unrecognized," burying
+// the rare, genuinely-worth-a-look types (Wrong item, Transfer to/from patient,
+// My Items issue to/from patient) in noise -- defeating the purpose of flagging.
+const KNOWN_HOUSEKEEPING_TYPES = [
+  'autorxcheck', 'rxcheck', 'countinventory', 'demandcount', 'verifyinventory',
+  'verifyinventoryunloadeject', 'recoveredstoragespace', 'load', 'loadautoload',
+  'loadinsert', 'outdate', 'unload', 'unloadeject', 'expireditem'
+];
+function pyxisTypeIsHousekeeping(rawType) {
+  return KNOWN_HOUSEKEEPING_TYPES.includes(normText(rawType));
+}
+
+const KNOWN_TYPE_SPEC_KEYS = ['remove', 'return', 'risk', 'internalMovement', 'patientTransfer'];
+function pyxisTypeIsKnown(rawType) {
+  return pyxisTypeIsHousekeeping(rawType) || KNOWN_TYPE_SPEC_KEYS.some(k => pyxisTypeMatchesSpec(rawType, k));
+}
+
+// Anything that doesn't match a known bucket is treated as unrecognized rather than
+// silently ignored -- a diversion/safety tool should surface unexpected activity by
+// default, not make it disappear. This also protects against a facility using
+// transaction-type text this tool has never been told about (e.g. Wrong item,
+// My Items issue to/from patient, Transfer to/from patient -- all real Pyxis types
+// that simply haven't been observed in this site's exports yet).
+function pyxisTypeIsUnrecognized(rawType) {
+  const norm = normText(rawType);
+  if (!norm) return false;
+  if (norm.includes('cancel')) return false; // cancelled transactions are noise either way, not unrecognized activity
+  return !pyxisTypeIsKnown(rawType);
+}
+
+function pyxisRiskFlagReason(t) {
+  return pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'risk')
+    ? 'Override / Discrepancy'
+    : 'Unrecognized transaction type — not seen in prior facility data, review to confirm what it represents';
+}
 
 let state = { search: '', unit: 'All', products: null, knownProducts: null, productSearch: '', statusFilter: 'All', sortField: 'status', sortDir: 'asc', expanded: new Set(), showUnresolvedOnly: false };
 let PYXIS_TXNS = null;
@@ -341,6 +409,34 @@ function dateOnly(dtStr) {
   const d = new Date(dtStr);
   if (isNaN(d)) return null;
   return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+}
+
+// Computes the min/max date actually present in a set of rows, using the given
+// field name -- used to detect when the BCMA and Pyxis exports cover different
+// date windows, since an unmatched Pyxis pull dated outside BCMA's export range
+// was never a fair test (BCMA couldn't have recorded it either way) and shouldn't
+// be treated with the same confidence as one that falls within both files' shared
+// coverage.
+function computeDateRange(rows, field) {
+  let min = null, max = null;
+  rows.forEach(r => {
+    const d = new Date(r[field]);
+    if (isNaN(d)) return;
+    if (min === null || d < min) min = d;
+    if (max === null || d > max) max = d;
+  });
+  return min && max ? { min, max } : null;
+}
+
+function dateRangeOverlap(rangeA, rangeB) {
+  if (!rangeA || !rangeB) return null;
+  const start = rangeA.min > rangeB.min ? rangeA.min : rangeB.min;
+  const end = rangeA.max < rangeB.max ? rangeA.max : rangeB.max;
+  return start <= end ? { start, end } : null; // null means no overlap at all
+}
+
+function fmtDate(d) {
+  return d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : '?';
 }
 
 function normText(s) { return (s||'').toString().toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -360,6 +456,37 @@ function stripStrength(s) {
     .replace(/\b\d+(\.\d+)?\s*(mcg|mg|g|ml|milliliters?|units?|meq|mmol|%)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
+
+// Turns a product string into an order-independent grouping key: strips
+// strength/unit tokens (as above), removes bracket/parenthesis/hyphen/slash
+// punctuation (formatting noise, not meaningful content), then sorts the
+// remaining words alphabetically. Word order in formulary strings isn't
+// standardized even within one facility -- confirmed against a real export
+// where "morphine 2 mg/mL (PF) inj [1mL]" and "morphine PF 4 mg/mL 1 mL Inj"
+// describe what both dispense and charge for the SAME administration, but
+// differ only in where "PF" sits and leftover bracket artifacts -- the
+// original raw-string-order key treated these as two different drugs, silently
+// splitting one reconciliation group into two. Sorting tokens makes the key
+// insensitive to word order while still correctly keeping genuinely different
+// products distinct: package-size/vial-size variants of the same drug still
+// group together (confirmed against a real export with three midazolam vial
+// sizes), while different dosing-interval/brand variants of a drug (confirmed
+// against a real export: Eligard 3-month vs 6-month, Lupron vs Lupron Gyn)
+// still correctly stay separate, since their distinguishing words (the
+// interval, "Gyn", etc.) survive stripping and don't cancel out under sorting.
+// Different concentrations of the same drug are intentionally still grouped
+// together (confirmed with the user) -- a charted strength mismatch is meant to
+// surface as a flag on one combined row, not split into two separate rows.
+function genericGroupTokenKey(s) {
+  const cleaned = (s || '').toString()
+    .replace(/\b\d+(\.\d+)?\s*(mcg|mg|g|ml|milliliters?|units?|meq|mmol|%)\b/gi, '')
+    .replace(/[()\[\]]/g, ' ')
+    .replace(/[-\/]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  const tokens = cleaned.toLowerCase().match(/[a-z0-9.]+/g) || [];
+  return tokens.sort().join(' ');
 }
 
 // Resolves a BCMA row's generic drug name: prefers an explicit Formulary
@@ -413,6 +540,7 @@ function render() {
   renderMedTable();
   renderPyxisSideViews();
   renderUnaccounted();
+  renderCrossFinWarnings();
   renderDetailTable();
   populateUnitFilter();
 }
@@ -424,9 +552,9 @@ function renderCallouts() {
   }
   document.getElementById('statusCallouts').innerHTML = `
     <div class="callout slate"><span>🔄</span><div><b>Netting rule:</b> A Device Return offsets one Device Dispense, and a Credit on Administration offsets one Charge, within the same FIN. Counts below reflect raw and net values.</div></div>
-    <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two (or more) FINs for the same patient, same day — rescheduling, registration changes, or an appointment mishap. Dispense/charge pairs are matched by patient identity + date rather than left as open gaps, and are labeled <b>Resolved (Cross-FIN Match)</b>.</div></div>
+    <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two FINs for the same patient, same drug, same day, same unit — rescheduling, registration changes, or an appointment mishap. A pair is only auto-resolved when exactly two FINs share that bucket and their dispense/charge activity nets to exactly zero between them; anything more ambiguous (more than two FINs, or nets that don't cancel) is left unresolved and surfaced in "Cross-FIN Groups Needing Review" instead of being silently paired.</div></div>
     <div class="callout blue"><span>🧪</span><div><b>NDC crosswalk:</b> Where dispense and charge counts match but NDCs differ, it's flagged as <b>Balanced (NDC Mismatch)</b> — the pairing is complete, but pharmacy/billing should confirm whether the NDC difference is an expected package-to-billing-unit mapping.</div></div>
-    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text, if no Generic Name column is present) — this is what still confirms a dispense/charge that's the right drug charted at the wrong strength, since dispense and charge rows are grouped by generic name (strength stripped) before reconciliation even runs; a strength mismatch is flagged separately in the row detail rather than hidden. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
+    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text) using word-boundary token matching (not raw substring containment, which would wrongly match unrelated drugs like epinephrine/norepinephrine) — this still confirms a dispense/charge that's the right drug charted at the wrong strength or salt form, flagged separately as a formulation note rather than treated as silently identical. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
   `;
 }
 
@@ -509,6 +637,31 @@ function renderUnaccounted() {
   document.getElementById('unaccountedTable').innerHTML = `
     <thead><tr><th>FIN</th><th>Patient</th><th>Unit</th><th>Drug</th><th class="center">Net Disp.</th><th class="center">Net Chg.</th><th>Gap</th></tr></thead>
     <tbody>${rows}</tbody>`;
+}
+
+function renderCrossFinWarnings() {
+  const title = document.getElementById('crossFinWarningTitle');
+  const table = document.getElementById('crossFinWarningTable');
+  const rows = CROSS_FIN_WARNINGS.filter(w => pyxisDrugSelected(w.drug));
+  title.textContent = `Cross-FIN Groups Needing Review (${rows.length})`;
+  if (rows.length === 0) {
+    table.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ No ambiguous cross-FIN groups — every multi-FIN split either cleanly paired or is already surfaced below as unresolved.</td></tr></tbody>';
+    return;
+  }
+  const body = rows.map(w => `<tr class="row-amber">
+    <td>${escapeHtml(w.patient)}</td>
+    <td>${escapeHtml(w.drug)}</td>
+    <td>${escapeHtml(w.day)}</td>
+    <td>${escapeHtml(w.unit)}</td>
+    <td class="mono">${w.fins.map(escapeHtml).join(', ')}</td>
+    <td class="mono">${w.nets.join(', ')}</td>
+    <td class="center">${w.totalNet}</td>
+    <td>${escapeHtml(w.idBasis)}</td>
+    <td>${escapeHtml(w.reason)}</td>
+  </tr>`).join('');
+  table.innerHTML = `
+    <thead><tr><th>Patient</th><th>Drug</th><th>Day</th><th>Unit</th><th>FINs</th><th>Net per FIN</th><th class="center">Combined Net</th><th>ID Basis</th><th>Reason</th></tr></thead>
+    <tbody>${body}</tbody>`;
 }
 
 // ============ PYXIS-SIDE VIEWS (movement summary + reverse/orphan-pull check) ============
@@ -609,10 +762,23 @@ function pyxisTxnMatchesBcma(t, lookup) {
 function computeUnmatchedPyxisPulls() {
   if (!PYXIS_TXNS) return null;
   const lookup = buildBcmaDispenseLookup();
-  return PYXIS_TXNS
+  const unmatched = PYXIS_TXNS
     .filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'remove'))
     .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID))
     .filter(t => !pyxisTxnMatchesBcma(t, lookup));
+
+  const overlap = dateRangeOverlap(BCMA_DATE_RANGE, PYXIS_DATE_RANGE);
+  return unmatched.map(t => {
+    const d = new Date(t.TRANSACTION_DT);
+    // A pull can only be treated as a confirmed, unexplained orphan if it falls
+    // within a date BCMA actually had a chance to record -- one dated outside
+    // BCMA's export window was never a fair test, since BCMA's extract simply
+    // doesn't reach that far. Without a computable overlap (e.g. one file has no
+    // parseable dates at all), fall back to treating every unmatched pull as
+    // in-range rather than silently hiding it.
+    const inOverlap = !overlap || isNaN(d) ? true : (d >= overlap.start && d <= overlap.end);
+    return { ...t, inOverlap };
+  });
 }
 
 function pyxisTxnRow(t) {
@@ -626,63 +792,146 @@ function pyxisTxnRow(t) {
   </tr>`;
 }
 
+function renderDateRangeNotice() {
+  const overlap = dateRangeOverlap(BCMA_DATE_RANGE, PYXIS_DATE_RANGE);
+  if (!BCMA_DATE_RANGE || !PYXIS_DATE_RANGE) return '';
+  const rangesMatch = fmtDate(BCMA_DATE_RANGE.min) === fmtDate(PYXIS_DATE_RANGE.min) && fmtDate(BCMA_DATE_RANGE.max) === fmtDate(PYXIS_DATE_RANGE.max);
+  if (rangesMatch) return '';
+  const overlapText = overlap
+    ? `Overlapping window both files can actually confirm: <b>${fmtDate(overlap.start)}</b> to <b>${fmtDate(overlap.end)}</b>.`
+    : `<b>These two files do not overlap in time at all</b> -- no Pyxis pull can be fairly checked against this BCMA export.`;
+  return `<div class="callout amber"><span>📅</span><div><b>Date range mismatch:</b> BCMA export covers <b>${fmtDate(BCMA_DATE_RANGE.min)}</b> to <b>${fmtDate(BCMA_DATE_RANGE.max)}</b>; Pyxis export covers <b>${fmtDate(PYXIS_DATE_RANGE.min)}</b> to <b>${fmtDate(PYXIS_DATE_RANGE.max)}</b>. ${overlapText} A Pyxis pull dated outside that overlap can't be fairly called an unexplained orphan -- the BCMA export simply never had a chance to record it either way -- so those are called out separately below rather than mixed in with pulls that fall inside the shared window and have no excuse.</div></div>`;
+}
+
 function renderUnmatchedPyxisTable() {
   const rows = computeUnmatchedPyxisPulls();
+  const noticeHtml = renderDateRangeNotice();
+  document.getElementById('dateRangeNotice_unmatched').innerHTML = noticeHtml;
   if (rows === null) {
     document.getElementById('unmatchedPyxisTitle').textContent = 'Pyxis Pulls With No BCMA Record';
     document.getElementById('unmatchedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to run this check.</td></tr></tbody>';
     return;
   }
-  document.getElementById('unmatchedPyxisTitle').textContent = `Pyxis Pulls With No BCMA Record (${rows.length})`;
+  const inRange = rows.filter(r => r.inOverlap);
+  const outOfRange = rows.filter(r => !r.inOverlap);
+  document.getElementById('unmatchedPyxisTitle').textContent = `Pyxis Pulls With No BCMA Record (${inRange.length} confirmed${outOfRange.length ? `, ${outOfRange.length} outside date overlap` : ''})`;
   if (rows.length === 0) {
     document.getElementById('unmatchedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ Every Pyxis Remove for the selected drugs has a matching BCMA dispense.</td></tr></tbody>';
     return;
   }
-  document.getElementById('unmatchedPyxisTable').innerHTML = `
-    <thead><tr><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th></tr></thead>
-    <tbody>${rows.map(pyxisTxnRow).join('')}</tbody>`;
+  let html = `<thead><tr><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th></tr></thead><tbody>`;
+  if (inRange.length === 0) {
+    html += `<tr><td colspan="6" style="padding:12px; text-align:center; color:#16a34a; font-weight:600;">✓ No confirmed orphan pulls within the overlapping date range.</td></tr>`;
+  } else {
+    html += inRange.map(pyxisTxnRow).join('');
+  }
+  if (outOfRange.length > 0) {
+    html += `<tr><td colspan="6" style="padding:8px 10px; background:#f8fafc; font-weight:600; color:#64748b; font-size:11.5px;">Outside date overlap — cannot be confirmed either way (${outOfRange.length})</td></tr>`;
+    html += outOfRange.map(t => `<tr class="row-slate">
+      <td>${escapeHtml(t.PATIENT_NAME || '')}</td>
+      <td class="mono">${escapeHtml(t.FIN || '')}</td>
+      <td class="mono">${escapeHtml(t.MED_ID || '')}</td>
+      <td>${escapeHtml(t.GENERIC_NAME || '')}</td>
+      <td>${escapeHtml(t.TRANSACTION_TYPE || '')}</td>
+      <td>${escapeHtml(t.TRANSACTION_DT || '')}</td>
+    </tr>`).join('');
+  }
+  html += '</tbody>';
+  document.getElementById('unmatchedPyxisTable').innerHTML = html;
 }
 
 function computeRiskFlaggedPyxisTxns() {
   if (!PYXIS_TXNS) return null;
   return PYXIS_TXNS
-    .filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'risk'))
+    .filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'risk') || pyxisTypeIsUnrecognized(t.TRANSACTION_TYPE))
     .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID));
 }
 
 function renderRiskFlaggedPyxisTable() {
   const rows = computeRiskFlaggedPyxisTxns();
   if (rows === null) {
-    document.getElementById('riskFlaggedPyxisTitle').textContent = 'Other Flagged Pyxis Activity — Override / Discrepancy';
+    document.getElementById('riskFlaggedPyxisTitle').textContent = 'Other Flagged Pyxis Activity — Override / Discrepancy / Unrecognized';
     document.getElementById('riskFlaggedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to see this.</td></tr></tbody>';
     return;
   }
-  document.getElementById('riskFlaggedPyxisTitle').textContent = `Other Flagged Pyxis Activity — Override / Discrepancy (${rows.length})`;
+  document.getElementById('riskFlaggedPyxisTitle').textContent = `Other Flagged Pyxis Activity — Override / Discrepancy / Unrecognized (${rows.length})`;
   if (rows.length === 0) {
-    document.getElementById('riskFlaggedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ No Override or Discrepancy transactions for the selected drugs.</td></tr></tbody>';
+    document.getElementById('riskFlaggedPyxisTable').innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#16a34a; font-weight:600;">✓ No Override, Discrepancy, or unrecognized transaction types for the selected drugs.</td></tr></tbody>';
     return;
   }
   document.getElementById('riskFlaggedPyxisTable').innerHTML = `
-    <thead><tr><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th></tr></thead>
-    <tbody>${rows.map(pyxisTxnRow).join('')}</tbody>`;
+    <thead><tr><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th><th>Reason Flagged</th></tr></thead>
+    <tbody>${rows.map(t => `<tr>
+      <td>${escapeHtml(t.PATIENT_NAME || '')}</td>
+      <td class="mono">${escapeHtml(t.FIN || '')}</td>
+      <td class="mono">${escapeHtml(t.MED_ID || '')}</td>
+      <td>${escapeHtml(t.GENERIC_NAME || '')}</td>
+      <td>${escapeHtml(t.TRANSACTION_TYPE || '')}</td>
+      <td>${escapeHtml(t.TRANSACTION_DT || '')}</td>
+      <td>${pyxisTypeIsUnrecognized(t.TRANSACTION_TYPE) ? '<span class="badge slate">Unrecognized type</span>' : '<span class="badge red">Override/Discrepancy</span>'} <span class="muted" style="display:block; margin-top:2px; max-width:260px;">${escapeHtml(pyxisRiskFlagReason(t))}</span></td>
+    </tr>`).join('')}</tbody>`;
 }
 
-// A "pocket" is the physical drawer/pocket slot a drug is stocked in. Med ID
-// (when populated) is the most reliable identity for it; when it's blank,
-// fall back to the Drw|Sub Drw|Pkt location plus the drug label, since two
-// different pockets can hold the same drug and must be tracked separately --
-// each has its own independent Beg/End sequence.
-function pocketKeyOf(t) {
+function renderInternalMovementTable() {
+  const table = document.getElementById('internalMovementTable');
+  if (!PYXIS_TXNS) {
+    table.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">Load a Pyxis file to see this.</td></tr></tbody>';
+    return;
+  }
+  const rows = PYXIS_TXNS
+    .filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'internalMovement') || pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'patientTransfer'))
+    .filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID));
+  if (rows.length === 0) {
+    table.innerHTML = '<tbody><tr><td style="padding:16px; text-align:center; color:#94a3b8;">No Internal Movement or Patient Transfer activity for the drugs currently selected above.</td></tr></tbody>';
+    return;
+  }
+  table.innerHTML = `
+    <thead><tr><th>Category</th><th>Patient</th><th>FIN</th><th>Med ID</th><th>Generic Name</th><th>Transaction Type</th><th>Date/Time</th></tr></thead>
+    <tbody>${rows.map(t => {
+      const category = pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'internalMovement') ? 'Internal Movement' : 'Patient Transfer';
+      const badgeCls = category === 'Internal Movement' ? 'slate' : 'blue';
+      return `<tr>
+        <td><span class="badge ${badgeCls}">${category}</span></td>
+        <td>${escapeHtml(t.PATIENT_NAME || '')}</td>
+        <td class="mono">${escapeHtml(t.FIN || '')}</td>
+        <td class="mono">${escapeHtml(t.MED_ID || '')}</td>
+        <td>${escapeHtml(t.GENERIC_NAME || '')}</td>
+        <td>${escapeHtml(t.TRANSACTION_TYPE || '')}</td>
+        <td>${escapeHtml(t.TRANSACTION_DT || '')}</td>
+      </tr>`;
+    }).join('')}</tbody>`;
+}
+
+// A "pocket" is the physical drawer/pocket slot a drug is stocked in. Reliable
+// identity requires BOTH Med ID and Drw|Sub Drw|Pkt when both are present -- Med ID
+// alone identifies WHICH DRUG, not WHICH PHYSICAL LOCATION, and the same Med ID can
+// genuinely be stocked in more than one location at once (confirmed against a real
+// export: one Med ID split across two named pockets produced a chain that alternated
+// between two independent Beg/End sequences, generating a false "gap" at every
+// transition between them -- 28 false gaps in that file alone, all resolved once
+// location was folded into the key). When location is missing, Med ID alone is the
+// next-best fallback; when BOTH are missing, grouping falls back to drug name only
+// and is tagged `unverified` so gaps in that bucket are visibly caveated rather than
+// presented with the same confidence as a fully-identified pocket.
+//
+// "Empty return bin" (and its cancelled variant) is excluded from this chain
+// entirely, regardless of Med ID/location: per facility workflow, it represents
+// pharmacy periodically clearing out a physically separate return-bin compartment,
+// not a continuation of the main dispensing pocket's stock count -- its Beg/End
+// values describe the bin's own count, unrelated to the pocket sequence, and mixing
+// it in produces false gaps every time it's interleaved with real stock activity.
+function pyxisTypeIsExcludedFromPocketChain(rawType) {
+  return normText(rawType).includes('emptyreturnbin');
+}
+
+function pocketKeyInfo(t) {
   const medId = (t.MED_ID || '').toString().trim();
   const drw = (t.DRW_PKT || '').toString().trim();
   const drug = normText(t.GENERIC_NAME || t.MED_ID || '');
-  // A Med ID alone isn't a unique pocket -- the same drug/item can be stocked
-  // in more than one physical station (different units, different cabinets).
-  // Combine Med ID with the pocket location whenever both are present; only
-  // fall back to Med ID alone if this export never populates Drw|Pkt at all.
-  if (medId && drw) return 'medDrw::' + medId + '::' + drw;
-  if (medId) return 'med::' + medId;
-  return drw ? ('drw::' + drw + '::' + drug) : ('nodrw::' + drug);
+  if (medId && drw) return { key: 'med+drw::' + medId + '::' + drw, unverified: false };
+  if (drw) return { key: 'drw::' + drw + '::' + drug, unverified: false };
+  if (medId) return { key: 'med::' + medId, unverified: false };
+  return { key: 'nodrw::' + drug, unverified: true };
 }
 
 // Chains Beg->End chronologically per pocket to get a current on-hand count
@@ -695,12 +944,13 @@ function pocketKeyOf(t) {
 function buildPocketBalances(txns) {
   const groups = {};
   txns.forEach(t => {
+    if (pyxisTypeIsExcludedFromPocketChain(t.TRANSACTION_TYPE)) return;
     const beg = parseFloat(t.BEG), end = parseFloat(t.END);
     if (isNaN(beg) || isNaN(end)) return;
     const label = (t.GENERIC_NAME || t.MED_ID || '').toString().trim();
     if (!pyxisDrugSelected(label)) return;
-    const key = pocketKeyOf(t);
-    if (!groups[key]) groups[key] = { label: label || '(unspecified)', medId: t.MED_ID || '', drw: t.DRW_PKT || '', uom: t.BEGEND_UOM || '', txns: [] };
+    const { key, unverified } = pocketKeyInfo(t);
+    if (!groups[key]) groups[key] = { label: label || '(unspecified)', medId: t.MED_ID || '', drw: t.DRW_PKT || '', uom: t.BEGEND_UOM || '', txns: [], unverified };
     groups[key].txns.push({ ...t, _beg: beg, _end: end });
   });
 
@@ -711,11 +961,11 @@ function buildPocketBalances(txns) {
     for (let i = 1; i < g.txns.length; i++) {
       const prev = g.txns[i - 1], cur = g.txns[i];
       if (prev._end !== cur._beg) {
-        gaps.push({ label: g.label, medId: g.medId, drw: g.drw, uom: g.uom, prevTxn: prev, curTxn: cur, diff: cur._beg - prev._end });
+        gaps.push({ label: g.label, medId: g.medId, drw: g.drw, uom: g.uom, prevTxn: prev, curTxn: cur, diff: cur._beg - prev._end, unverified: g.unverified });
       }
     }
     const last = g.txns[g.txns.length - 1];
-    balances.push({ label: g.label, medId: g.medId, drw: g.drw, uom: g.uom, currentBalance: last._end, asOf: last.TRANSACTION_DT });
+    balances.push({ label: g.label, medId: g.medId, drw: g.drw, uom: g.uom, currentBalance: last._end, asOf: last.TRANSACTION_DT, unverified: g.unverified });
   });
   return { balances, gaps };
 }
@@ -724,9 +974,10 @@ function rollupBalancesByDrug(balances) {
   const byDrug = {};
   balances.forEach(b => {
     const key = normText(b.label) + '::' + normText(b.uom);
-    if (!byDrug[key]) byDrug[key] = { label: b.label, uom: b.uom, total: 0, pockets: 0, asOf: b.asOf };
+    if (!byDrug[key]) byDrug[key] = { label: b.label, uom: b.uom, total: 0, pockets: 0, asOf: b.asOf, anyUnverified: false };
     byDrug[key].total += b.currentBalance;
     byDrug[key].pockets += 1;
+    if (b.unverified) byDrug[key].anyUnverified = true;
     if (new Date(b.asOf) > new Date(byDrug[key].asOf)) byDrug[key].asOf = b.asOf;
   });
   return Object.values(byDrug).sort((a, b) => a.label.localeCompare(b.label));
@@ -754,7 +1005,7 @@ function renderPyxisBalanceTables() {
   balanceSection.innerHTML = `
     <thead><tr><th>Drug</th><th class="center">Current On-Hand</th><th>Unit</th><th class="center">Pockets</th><th>As Of (latest pocket seen)</th></tr></thead>
     <tbody>${rollup.map(r => `<tr>
-      <td>${escapeHtml(r.label)}</td>
+      <td>${escapeHtml(r.label)}${r.anyUnverified ? ' <span class="badge slate" title="At least one pocket for this drug had no Med ID or Drw/Sub Drw/Pkt, so it was grouped by drug name alone -- if more than one physical pocket stocks this drug, this total may blend them together.">⚠ unconfirmed pocket ID</span>' : ''}</td>
       <td class="center"><b>${r.total}</b></td>
       <td>${escapeHtml(r.uom)}</td>
       <td class="center">${r.pockets}</td>
@@ -768,13 +1019,15 @@ function renderPyxisBalanceTables() {
   }
   gapSection.innerHTML = `
     <thead><tr><th>Drug</th><th>Med ID</th><th>Pocket</th><th>Previous Txn End</th><th>Next Txn Beg</th><th>Gap</th></tr></thead>
-    <tbody>${gaps.map(g => `<tr class="row-amber">
+    <tbody>${gaps.map(g => `<tr class="${g.unverified ? 'row-slate' : 'row-amber'}">
       <td>${escapeHtml(g.label)}</td>
       <td class="mono">${escapeHtml(g.medId)}</td>
       <td class="mono">${escapeHtml(g.drw)}</td>
       <td>${g.prevTxn._end} <span class="muted">@ ${escapeHtml(g.prevTxn.TRANSACTION_DT || '')}</span></td>
       <td>${g.curTxn._beg} <span class="muted">@ ${escapeHtml(g.curTxn.TRANSACTION_DT || '')}</span></td>
-      <td><span class="badge amber">${g.diff > 0 ? '+' : ''}${g.diff}</span></td>
+      <td>${g.unverified
+        ? `<span class="badge slate">possible false gap</span><div class="muted" style="margin-top:2px; max-width:220px;">Pocket identity unconfirmed — no Med ID or Drw/Pkt on these transactions, grouped by drug name only. May be two separate pockets, not a real gap.</div>`
+        : `<span class="badge amber">${g.diff > 0 ? '+' : ''}${g.diff}</span>`}</td>
     </tr>`).join('')}</tbody>`;
 }
 
@@ -783,6 +1036,7 @@ function renderPyxisSideViews() {
   renderUnmatchedPyxisTable();
   renderRiskFlaggedPyxisTable();
   renderPyxisBalanceTables();
+  renderInternalMovementTable();
 }
 
 function populateUnitFilter() {
@@ -835,7 +1089,7 @@ function populateProductFilter() {
       if (cb.checked) state.products.add(cb.value);
       else state.products.delete(cb.value);
       updateProductLabel(products);
-      renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderDetailTable();
+      renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderCrossFinWarnings(); renderDetailTable();
     });
   });
 
@@ -895,10 +1149,15 @@ function renderResolutionSummary() {
 function pyxisCheckLine(label, check) {
   if (!check) return '';
   const basisNote = check.basis ? ` <span class="muted">(matched by ${check.basis})</span>` : '';
+  const riskNote = check.fuzzyRisk === 'formulation'
+    ? ` <span class="badge amber">⚠ formulation/salt differs — verify</span>`
+    : check.fuzzyRisk === 'classname'
+      ? ` <span class="badge red">⚠ class-level match only — confirm exact product</span>`
+      : '';
   const seen = (check.seenTxns && check.seenTxns.length)
     ? `<div class="muted mono" style="margin:2px 0 8px 0;">Pyxis activity seen: ${check.seenTxns.map(escapeHtml).join(' &nbsp;|&nbsp; ')}</div>`
     : '<br>';
-  return `${label}: <b>${escapeHtml(check.status)}</b>${basisNote}${seen}`;
+  return `${label}: <b>${escapeHtml(check.status)}</b>${basisNote}${riskNote}${seen}`;
 }
 
 function renderDetailTable() {
@@ -933,6 +1192,7 @@ function renderDetailTable() {
         <div class="detail-grid">
           <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.genericName)}${r.strengthMismatch ? `<div class="muted" style="margin-top:2px;">⚠ Strength/formulation mismatch — charted as: <span class="mono">${escapeHtml(r.product)}</span> — verify charting</div>` : ''}</div></div>
           <div><div class="field-label">Facility</div><div class="field-value">${escapeHtml(r.facility)}</div></div>
+          ${r.pharmacyEvents && r.pharmacyEvents.length ? `<div style="grid-column: 1 / -1;"><div class="field-label">Pharmacy-Side Activity (not a device dispense)</div><div class="field-value">${r.pharmacyEvents.map(escapeHtml).join(' &nbsp;|&nbsp; ')} <span class="muted">— confirm with pharmacy whether the medication was actually given</span></div></div>` : ''}
           <div style="grid-column: 1 / -1;"><div class="field-label">Pyxis Verification</div><div class="field-value">${pyxisDetail}</div></div>
           <div><div class="field-label">Dispense NDC(s)</div><div class="field-value mono">${escapeHtml(r.dispenseNdcs)||'—'}</div></div>
           <div><div class="field-label">Charge NDC(s)</div><div class="field-value mono">${escapeHtml(r.chargeNdcs)||'—'}</div></div>
@@ -982,7 +1242,10 @@ function renderDetailTable() {
 // ============ EXCEL EXPORT ============
 function pyxisCheckExportText(check) {
   if (!check) return '';
-  return check.status + (check.basis ? ` (${check.basis})` : '');
+  const riskSuffix = check.fuzzyRisk === 'formulation' ? ' [formulation/salt differs — verify]'
+    : check.fuzzyRisk === 'classname' ? ' [class-level match only — confirm exact product]'
+    : '';
+  return check.status + (check.basis ? ` (${check.basis})` : '') + riskSuffix;
 }
 
 function exportToExcel() {
@@ -1012,6 +1275,7 @@ function exportToExcel() {
     'Return Date(s)': r.returnDates,
     'Credit Date(s)': r.creditDates,
     'Status': r.status,
+    'Pharmacy-Side Activity (not a device dispense)': (r.pharmacyEvents && r.pharmacyEvents.length) ? r.pharmacyEvents.join(' | ') : '',
     'Linked FIN': r.linkedFin || '',
     'Pyxis Status': r.pyxisStatus,
     'Pyxis Dispense Check': pyxisCheckExportText(r.pyxisDispenseCheck),
@@ -1080,29 +1344,48 @@ function exportToExcel() {
   const pocketData = PYXIS_TXNS ? buildPocketBalances(PYXIS_TXNS) : null;
   const balanceRows = (!pocketData || pocketData.balances.length === 0) ? [{'Result': PYXIS_TXNS ? 'No Beg/End data available' : 'No Pyxis file loaded'}] :
     rollupBalancesByDrug(pocketData.balances).map(r => ({
-      'Drug': r.label, 'Current On-Hand': r.total, 'Unit': r.uom, 'Pockets': r.pockets, 'As Of (latest pocket seen)': r.asOf
+      'Drug': r.label, 'Current On-Hand': r.total, 'Unit': r.uom, 'Pockets': r.pockets, 'As Of (latest pocket seen)': r.asOf,
+      'Pocket ID Confirmed': r.anyUnverified ? 'No — grouped by drug name only, may blend multiple pockets' : 'Yes'
     }));
   const gapRows = (!pocketData || pocketData.balances.length === 0) ? [{'Result': PYXIS_TXNS ? 'No Beg/End data available' : 'No Pyxis file loaded'}] :
     (pocketData.gaps.length ? pocketData.gaps.map(g => ({
       'Drug': g.label, 'Med ID': g.medId, 'Pocket': g.drw,
       'Previous Txn End': g.prevTxn._end, 'Previous Txn Time': g.prevTxn.TRANSACTION_DT || '',
       'Next Txn Beg': g.curTxn._beg, 'Next Txn Time': g.curTxn.TRANSACTION_DT || '',
-      'Gap': g.diff
+      'Gap': g.diff,
+      'Pocket ID Confirmed': g.unverified ? 'No — possible false gap, drug name only (no Med ID/Drw/Pkt)' : 'Yes'
     })) : [{'Result': "Every pocket's Beg/End chains continuously"}]);
 
   const unmatchedPulls = computeUnmatchedPyxisPulls();
   const unmatchedPullRows = unmatchedPulls === null ? [{'Result': 'No Pyxis file loaded'}] :
     (unmatchedPulls.length ? unmatchedPulls.map(t => ({
       'Patient': t.PATIENT_NAME || '', 'FIN': t.FIN || '', 'Med ID': t.MED_ID || '',
-      'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || ''
+      'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || '',
+      'Within Overlapping Date Range': t.inOverlap ? 'Yes — confirmed orphan' : 'No — outside BCMA export window, cannot be confirmed'
     })) : [{'Result': 'Every Pyxis Remove has a matching BCMA dispense'}]);
 
   const riskFlagged = computeRiskFlaggedPyxisTxns();
   const riskFlaggedRows = riskFlagged === null ? [{'Result': 'No Pyxis file loaded'}] :
     (riskFlagged.length ? riskFlagged.map(t => ({
       'Patient': t.PATIENT_NAME || '', 'FIN': t.FIN || '', 'Med ID': t.MED_ID || '',
+      'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || '',
+      'Reason Flagged': pyxisRiskFlagReason(t)
+    })) : [{'Result': 'No Override, Discrepancy, or unrecognized transaction types'}]);
+
+  const internalMovementTxns = PYXIS_TXNS ? PYXIS_TXNS.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'internalMovement') || pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'patientTransfer')).filter(t => pyxisDrugSelected(t.GENERIC_NAME || t.MED_ID)) : null;
+  const internalMovementRows = internalMovementTxns === null ? [{'Result': 'No Pyxis file loaded'}] :
+    (internalMovementTxns.length ? internalMovementTxns.map(t => ({
+      'Category': pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'internalMovement') ? 'Internal Movement' : 'Patient Transfer',
+      'Patient': t.PATIENT_NAME || '', 'FIN': t.FIN || '', 'Med ID': t.MED_ID || '',
       'Generic Name': t.GENERIC_NAME || '', 'Transaction Type': t.TRANSACTION_TYPE || '', 'Date/Time': t.TRANSACTION_DT || ''
-    })) : [{'Result': 'No Override or Discrepancy transactions'}]);
+    })) : [{'Result': 'No Internal Movement or Patient Transfer activity'}]);
+
+  const crossFinScoped = CROSS_FIN_WARNINGS.filter(w => pyxisDrugSelected(w.drug));
+  const crossFinRows = crossFinScoped.length ? crossFinScoped.map(w => ({
+    'Patient': w.patient, 'Drug': w.drug, 'Day': w.day, 'Unit': w.unit,
+    'FINs': w.fins.join(', '), 'Net per FIN': w.nets.join(', '), 'Combined Net': w.totalNet,
+    'ID Basis': w.idBasis, 'Reason': w.reason
+  })) : [{'Result': 'No ambiguous cross-FIN groups for the drugs currently selected'}];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailSheetRows), 'Detail');
@@ -1112,6 +1395,8 @@ function exportToExcel() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(gapRows), 'Pyxis Balance Gaps');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unmatchedPullRows), 'Pyxis No BCMA Record');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(riskFlaggedRows), 'Pyxis Override-Discrepancy');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(internalMovementRows), 'Internal Movement-Transfer');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(crossFinRows), 'Cross-FIN Groups Review');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unaccountedRows.length ? unaccountedRows : [{'Result': 'Nothing unaccounted for'}]), 'Not Accounted For');
 
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
@@ -1160,19 +1445,79 @@ function parsePyxisWorkbook(workbook) {
   const begEndUomIdx = col('Beg/End UOM');
   const drwPktIdx = col('Drw|Sub Drw|Pkt');
 
+  // Locate the Patient Name column, then determine which of two real Pyxis export
+  // layouts this file uses:
+  //   - "Group By: Patient" layout: Patient Name sits in column 0 as a BANNER row
+  //     (a row containing only the patient name, blank everywhere else) followed
+  //     by that patient's transactions with column 0 left blank -- the name must be
+  //     carried forward from the banner row.
+  //   - "No Grouping (Excel Optimized)" layout: Patient Name is its own column
+  //     (often much later, e.g. right before Date of Birth) and is populated
+  //     directly on every patient-facing transaction row -- no banner rows at all,
+  //     and column 0 is actually "User Name" (the staff member), a different field
+  //     entirely. Trusting column 0 as patient name in this layout would silently
+  //     attribute every transaction to the wrong person.
+  // Detection is data-driven (checked directly against the loaded rows) rather than
+  // relying on the free-text "Group By:" report header, since that wording could
+  // vary by Pyxis version or site configuration: if the Patient Name column is ever
+  // populated on a row that also has both a Med ID and a Transaction Type, this
+  // file uses the direct-per-row layout; if it's always blank on such rows, it uses
+  // the banner-row layout.
+  const patientNameColIdx = colIdx[normHeader('Patient Name')];
+  let usesBannerRows = true;
+  if (patientNameColIdx !== undefined) {
+    let sampledTxnRows = 0;
+    for (let i = headerRowIdx + 1; i < rows.length && sampledTxnRows < 30; i++) {
+      const row = rows[i];
+      if (!row) continue;
+      if (row[col('Med ID')] && row[col('Transaction Type')]) {
+        sampledTxnRows++;
+        if (row[patientNameColIdx] && row[patientNameColIdx].toString().trim()) { usesBannerRows = false; break; }
+      }
+    }
+  }
+
   let currentPatient = null;
   const txns = [];
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
-    const patientName = row[0] ? row[0].toString().trim() : '';
     const medId = row[col('Med ID')];
     const finId = row[col('ID')];
     const transactionType = row[col('Transaction Type')];
-    // A pure "patient banner" row carries only the name and nothing else. Some
-    // exports put the name AND the first transaction on the same row instead --
-    // checking Transaction Type too (not just Med ID/FIN, which can both be
-    // blank on a real transaction) keeps that row from being mistaken for one.
+
+    let patientName;
+    if (!usesBannerRows) {
+      // Direct-per-row layout: read Patient Name straight from its own column on
+      // every row, no carry-forward needed -- a blank here (e.g. on a Count
+      // inventory/Refill row) genuinely means no patient is associated with that
+      // transaction, not a banner-row gap to fill in.
+      patientName = patientNameColIdx !== undefined && row[patientNameColIdx] ? row[patientNameColIdx].toString().trim() : '';
+      if (medId || finId || transactionType) {
+        txns.push({
+          PATIENT_NAME: patientName,
+          MED_ID: medId,
+          GENERIC_NAME: genericNameIdx !== undefined ? row[genericNameIdx] : null,
+          TRANSACTION_TYPE: transactionType,
+          TRANSACTION_DT: row[col('Transaction Date/Time')],
+          FIN: finId,
+          DRW_PKT: drwPktIdx !== undefined ? row[drwPktIdx] : null,
+          BEG: begIdx !== undefined ? row[begIdx] : null,
+          END: endIdx !== undefined ? row[endIdx] : null,
+          QUANTITY: qtyIdx !== undefined ? row[qtyIdx] : null,
+          QTY_UOM: qtyUomIdx !== undefined ? row[qtyUomIdx] : null,
+          BEGEND_UOM: begEndUomIdx !== undefined ? row[begEndUomIdx] : null
+        });
+      }
+      continue;
+    }
+
+    // Banner-row layout (column 0 doubles as the patient-name column): a pure
+    // "patient banner" row carries only the name and nothing else. Some exports
+    // put the name AND the first transaction on the same row instead -- checking
+    // Transaction Type too (not just Med ID/FIN, which can both be blank on a real
+    // transaction) keeps that row from being mistaken for one.
+    patientName = row[0] ? row[0].toString().trim() : '';
     if (patientName && !medId && !finId && !transactionType) { currentPatient = patientName; continue; }
     if (patientName) currentPatient = patientName;
     if (medId || finId || transactionType) {
@@ -1225,11 +1570,81 @@ function admIdMatches(pyxisMedId, admIds) {
 // export includes one, otherwise its Med ID text, against BCMA's (Formulary) Generic
 // Name. Both sides are already strength-stripped before this runs, so a strength
 // mismatch alone won't block the match — it gets surfaced separately as a flag.
+//
+// Matching is done at the WORD-TOKEN level, not raw substring containment. Raw
+// substring containment is dangerous here: "norepinephrine".includes("epinephrine")
+// is true even though these are two different drugs with very different use
+// profiles -- exactly the kind of high-stakes mix-up a diversion tool must not wave
+// through. Salt-form/formulation suffix tokens (sulfate, hcl, er, xr, etc.) are
+// stripped from BOTH sides first so "morphine" still matches "morphine sulfate",
+// then a match requires either exact token-sequence equality or one full sequence
+// being a token-for-token PREFIX of the other from position 0 -- not a token buried
+// mid-string. This still allows genuine class-name ambiguity (e.g. a bare "insulin"
+// label matching "insulin glargine") since that's a real word-prefix relationship;
+// that's a data-quality question for the source export, not something string
+// matching alone can safely resolve.
+const SALT_FORM_SUFFIX_TOKENS = new Set([
+  'hcl','hydrochloride','sulfate','citrate','tartrate','succinate','besylate',
+  'maleate','mesylate','fumarate','phosphate','acetate','bitartrate','pamoate',
+  'extrel','er','xr','sr','ir','cr','odt','hbr'
+]);
+
+function tokenizeDrugName(s) {
+  return (s || '').toString().toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+// Strips trailing salt-form/formulation tokens but always keeps at least one token,
+// so a drug whose base name coincidentally matches a suffix word (rare) isn't
+// stripped down to nothing.
+function coreDrugTokens(tokens) {
+  const out = [...tokens];
+  while (out.length > 1 && SALT_FORM_SUFFIX_TOKENS.has(out[out.length - 1])) out.pop();
+  return out;
+}
+
+function isTokenPrefix(shorter, longer) {
+  if (shorter.length > longer.length) return false;
+  return shorter.every((tok, i) => tok === longer[i]);
+}
+
 function drugMatches(pyxisText, bcmaGenericName) {
-  const med = normText(pyxisText);
-  const prod = normText(bcmaGenericName);
-  if (!med || !prod) return false;
-  return med === prod || med.includes(prod) || prod.includes(med);
+  const medTokens = coreDrugTokens(tokenizeDrugName(pyxisText));
+  const prodTokens = coreDrugTokens(tokenizeDrugName(bcmaGenericName));
+  if (medTokens.length === 0 || prodTokens.length === 0) return false;
+  if (medTokens.join(' ') === prodTokens.join(' ')) return true;
+  const [shorter, longer] = medTokens.length <= prodTokens.length ? [medTokens, prodTokens] : [prodTokens, medTokens];
+  return isTokenPrefix(shorter, longer);
+}
+
+// Classifies WHY a fuzzy match succeeded, so the two risk profiles aren't lumped
+// together under one generic "fuzzy match" flag:
+//   'formulation' — same core drug, differs only by a stripped salt-form/formulation
+//                   suffix (e.g. "metoprolol tartrate" vs "metoprolol succinate").
+//                   Lower risk: the active ingredient is unambiguous.
+//   'classname'   — the shorter side is a single bare word that prefix-matches a
+//                   longer, more specific multi-word name where the extra word(s)
+//                   are NOT a stripped suffix (e.g. "insulin" vs "insulin glargine",
+//                   or a combo product like "hydrocodone" vs "hydrocodone
+//                   acetaminophen"). Higher risk: the longer side could be any
+//                   member of a class or a materially different product, not just
+//                   a different salt of the identical ingredient. In practice this
+//                   fallback should rarely be the deciding factor, since ADM_ID/Med
+//                   ID is the primary, product-level match tier checked first — a
+//                   classname-level fuzzy match happening at all is itself a signal
+//                   that the exact ID match was unavailable or didn't line up on
+//                   that row, which is worth a second look regardless of drug.
+//   null          — exact match (nothing to flag) or no match.
+function drugMatchFuzzyRisk(pyxisText, bcmaGenericName) {
+  const medRaw = tokenizeDrugName(pyxisText);
+  const prodRaw = tokenizeDrugName(bcmaGenericName);
+  const medCore = coreDrugTokens(medRaw);
+  const prodCore = coreDrugTokens(prodRaw);
+  if (medCore.length === 0 || prodCore.length === 0) return null;
+  if (!drugMatches(pyxisText, bcmaGenericName)) return null;
+  if (medRaw.join(' ') === prodRaw.join(' ')) return null;
+
+  const [shorterCore, longerCore] = medCore.length <= prodCore.length ? [medCore, prodCore] : [prodCore, medCore];
+  return shorterCore.join(' ') === longerCore.join(' ') ? 'formulation' : 'classname';
 }
 
 function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, indexes) {
@@ -1238,6 +1653,7 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, inde
 
   let anyCandidates = false;
   let matchBasis = null;
+  let fuzzyRisk = null;
   const seenTxns = [];
   const allVerified = dates.every(dd => {
     const day = dateOnly(dd);
@@ -1253,12 +1669,17 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, inde
 
     const typeMatches = candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, expectedTypeSpec));
     if (typeMatches.some(t => admIdMatches(t.MED_ID, admIds))) { matchBasis = `${locBasis} + ADM_ID`; return true; }
-    if (typeMatches.some(t => drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName))) { matchBasis = `${locBasis} + Generic Name (fuzzy)`; return true; }
+    const fuzzyMatch = typeMatches.find(t => drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName));
+    if (fuzzyMatch) {
+      matchBasis = `${locBasis} + Generic Name (fuzzy)`;
+      fuzzyRisk = drugMatchFuzzyRisk(fuzzyMatch.GENERIC_NAME || fuzzyMatch.MED_ID, r.genericName);
+      return true;
+    }
     return false;
   });
   const uniqueSeen = [...new Set(seenTxns)];
   if (!anyCandidates) return { status: 'Not in Extract', basis: null, seenTxns: [] };
-  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis, seenTxns: uniqueSeen };
+  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis, seenTxns: uniqueSeen, fuzzyRisk };
 }
 
 function recomputePyxisStatus() {
@@ -1267,6 +1688,8 @@ function recomputePyxisStatus() {
     return;
   }
   const indexes = buildPyxisIndexes(PYXIS_TXNS);
+
+  const PYXIS_EXPECTED = { 'Device Dispense': 'remove', 'Device Return': 'return' };
 
   REPORT.forEach(r => {
     const dispenseCheck = r.rawDispense > 0 ? checkEventAgainstPyxis(r, r.dispenseDates, r.dispenseAdmIds, PYXIS_EXPECTED['Device Dispense'], indexes) : null;
@@ -1290,6 +1713,7 @@ function handlePyxisFile(file) {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, { type: 'array', cellDates: true });
       PYXIS_TXNS = parsePyxisWorkbook(wb);
+      PYXIS_DATE_RANGE = computeDateRange(PYXIS_TXNS, 'TRANSACTION_DT');
       recomputePyxisStatus();
       const dz = document.getElementById('pyxisDropzone');
       dz.classList.add('has-data');
@@ -1297,6 +1721,7 @@ function handlePyxisFile(file) {
       dz.innerHTML = `<div>🛡️ Loaded <b>${PYXIS_TXNS.length}</b> Pyxis transactions across <b>${finCount}</b> FINs from <b>${escapeHtml(file.name)}</b></div><button class="secondary no-print" id="pyxisResetBtn">Remove</button>`;
       document.getElementById('pyxisResetBtn').addEventListener('click', () => {
         PYXIS_TXNS = null;
+        PYXIS_DATE_RANGE = null;
         recomputePyxisStatus();
         resetPyxisDropzoneUI();
         renderCallouts();
@@ -1320,7 +1745,7 @@ function resetPyxisDropzoneUI() {
   dz.classList.remove('has-data');
   dz.innerHTML = `<div class="icon">🛡️</div>
     <div><b>Drag and drop</b> a Pyxis device event report here</div>
-    <div class="hint">The standard "All Device Events Report" export grouped by patient, with Med ID, ID (FIN), Transaction Type, Transaction Date/Time columns</div>
+    <div class="hint">The standard "All Device Events Report" export — either "Group By: Patient" or "No Grouping (Excel Optimized)" layouts are supported.</div>
     <input type="file" id="pyxisFileInput" accept=".xlsx,.xls" style="display:none">`;
   wirePyxisDropzone();
 }
@@ -1331,30 +1756,90 @@ function parseSheetToReport(rows) {
   // Group by FIN + generic drug, not FIN alone: a single encounter can carry
   // more than one drug once tracking spans the whole formulary, and lumping
   // them into one FIN row would net one drug's dispense against another
-  // drug's charge.
-  const gkey = r => normText(genericNameOf(r));
+  // drug's charge. The grouping key is order-independent (see
+  // genericGroupTokenKey) so formatting/word-order differences between two
+  // ASSIGNED_PRODUCT strings for the same real administration don't fracture
+  // one FIN's activity into two separate, individually-"balanced" rows that
+  // mask what should have been a single reconciliation group.
+  const gkey = r => genericGroupTokenKey(genericNameOf(r));
   const byFinDrug = groupBy(rows, r => r.FIN + '::' + gkey(r));
   const byPatientId = groupBy(rows, r => r.EDIPI || r.MRN || r.PATIENT_NAME);
+
+  // Cross-FIN matching: links a dispense/charge split across two FINs for the same
+  // patient (rescheduling, registration changes, appt mishaps). This requires ALL of:
+  //   1. A strong patient identifier (EDIPI or MRN) -- name-only patients are tracked
+  //      separately and flagged, since two different people can share a name.
+  //   2. Same generic drug + same calendar day + same nurse unit -- unit is required
+  //      so a transfer-day patient with two independent, already-explainable encounters
+  //      on different units never gets wrongly paired together.
+  //   3. Exactly two FINs in that bucket whose nets are exact opposites (sum to zero).
+  //      Buckets with >2 FINs, or where the nets don't cancel, are never silently
+  //      auto-resolved -- they're surfaced as "Cross-FIN Groups Needing Review" instead,
+  //      because guessing a pairing (or clearing a bucket with a real leftover gap)
+  //      is exactly the kind of false-clear that would hide genuine diversion.
   const crossFinMap = {};
-  Object.values(byPatientId).forEach(prows => {
-    const dispenses = prows.filter(r => r.EVENT_TYPE === 'Device Dispense');
-    const charges = prows.filter(r => r.EVENT_TYPE === 'Charge on Administration');
-    dispenses.forEach(d => {
-      const dDate = dateOnly(d.EVENT_DT_TM);
-      const dKey = gkey(d);
-      charges.filter(c => c.FIN !== d.FIN && dateOnly(c.EVENT_DT_TM) === dDate && gkey(c) === dKey).forEach(c => {
-        crossFinMap[d.FIN + '::' + dKey] = c.FIN;
-        crossFinMap[c.FIN + '::' + dKey] = d.FIN;
+  const crossFinWarnings = [];
+  const byPatientIdStrong = groupBy(rows.filter(r => r.EDIPI || r.MRN), r => r.EDIPI || r.MRN);
+  const byPatientNameOnly = groupBy(rows.filter(r => !r.EDIPI && !r.MRN), r => r.PATIENT_NAME);
+
+  function processCrossFinGroup(prows, idBasis) {
+    const bucketKey = r => gkey(r) + '::' + dateOnly(r.EVENT_DT_TM) + '::' + (r.NURSE_UNIT || '(no unit)');
+    const buckets = groupBy(prows, bucketKey);
+    Object.entries(buckets).forEach(([bkey, bevents]) => {
+      const finNets = {};
+      const finPatient = {};
+      bevents.forEach(r => {
+        finNets[r.FIN] = finNets[r.FIN] || 0;
+        finPatient[r.FIN] = r.PATIENT_NAME || '';
+        if (r.EVENT_TYPE === 'Device Dispense') finNets[r.FIN]++;
+        else if (r.EVENT_TYPE === 'Device Return') finNets[r.FIN]--;
+        else if (r.EVENT_TYPE === 'Charge on Administration') finNets[r.FIN]--;
+        else if (r.EVENT_TYPE === 'Credit on Administration') finNets[r.FIN]++;
       });
+      const fins = Object.keys(finNets);
+      if (fins.length < 2) return; // only one FIN in this bucket -- nothing to cross-match
+
+      const nonZeroFins = fins.filter(f => finNets[f] !== 0);
+      if (nonZeroFins.length === 0) return; // every FIN here already nets to zero on its own
+      const totalNet = nonZeroFins.reduce((sum, f) => sum + finNets[f], 0);
+
+      if (nonZeroFins.length === 2 && totalNet === 0) {
+        const [f1, f2] = nonZeroFins;
+        crossFinMap[f1 + '::' + bkey] = f2;
+        crossFinMap[f2 + '::' + bkey] = f1;
+      } else {
+        crossFinWarnings.push({
+          idBasis, bucketKey: bkey,
+          drug: bkey.split('::')[0], day: bkey.split('::')[1], unit: bkey.split('::')[2],
+          patient: finPatient[nonZeroFins[0]] || Object.values(finPatient)[0] || '',
+          fins: nonZeroFins, nets: nonZeroFins.map(f => finNets[f]), totalNet,
+          reason: totalNet !== 0 ? 'Nets do not sum to zero — a real gap remains' : 'More than 2 FINs involved — pairing is ambiguous'
+        });
+      }
     });
-  });
+  }
+  Object.values(byPatientIdStrong).forEach(prows => processCrossFinGroup(prows, 'EDIPI/MRN'));
+  Object.values(byPatientNameOnly).forEach(prows => processCrossFinGroup(prows, 'Name-only (weak ID)'));
+
   const uniq = arr => [...new Set(arr)];
-  return Object.entries(byFinDrug).map(([groupKey, frows]) => {
+  // Pharmacy-side event types that are real, worth-noting activity on a FIN but are
+  // NOT a device dispense and are not expected to reconcile 1:1 against a charge --
+  // e.g. Cerner's "Initial Doses", "Fill List", and "Extra Dose" all originate from
+  // pharmacy rather than the dispensing device itself. Treating them as a Device
+  // Dispense would misrepresent what actually happened; ignoring them entirely
+  // (the prior behavior) caused a real false positive: a charge whose ONLY
+  // supporting activity was one of these pharmacy events was being flagged as
+  // "No Dispense on File" -- a status meant to signal charted-with-nothing-behind-it
+  // activity -- when in fact there was pharmacy-side activity, just not a device
+  // dispense. These are tracked separately and surfaced in their own status instead.
+  const PHARMACY_ONLY_EVENT_TYPES = new Set(['Initial Doses', 'Fill List', 'Extra Dose']);
+  const reportRows = Object.entries(byFinDrug).map(([groupKey, frows]) => {
     const fin = frows[0].FIN;
     const dispenses = frows.filter(r => r.EVENT_TYPE === 'Device Dispense');
     const charges = frows.filter(r => r.EVENT_TYPE === 'Charge on Administration');
     const returns = frows.filter(r => r.EVENT_TYPE === 'Device Return');
     const credits = frows.filter(r => r.EVENT_TYPE === 'Credit on Administration');
+    const pharmacyEvents = frows.filter(r => PHARMACY_ONLY_EVENT_TYPES.has(r.EVENT_TYPE));
     const first = frows[0];
     const netD = dispenses.length - returns.length;
     const netC = charges.length - credits.length;
@@ -1362,11 +1847,16 @@ function parseSheetToReport(rows) {
     const dNdcs = uniq(dispenses.map(d=>d.NDC).filter(Boolean));
     const cNdcs = uniq(charges.map(c=>c.NDC).filter(Boolean));
     const ndcMatch = dNdcs.length>0 && cNdcs.length>0 && dNdcs.every(n=>cNdcs.includes(n)) && cNdcs.every(n=>dNdcs.includes(n));
-    const linkedFin = crossFinMap[groupKey] || null;
+    // Cross-FIN links are now keyed by drug+day+unit, not just drug -- a FIN can in
+    // principle appear in more than one such bucket (different days/units), so we
+    // check every bucket this FIN's rows touch rather than assuming a single groupKey.
+    const finBucketKeys = uniq(frows.map(r => gkey(r) + '::' + dateOnly(r.EVENT_DT_TM) + '::' + (r.NURSE_UNIT || '(no unit)')));
+    const linkedFin = finBucketKeys.map(bk => crossFinMap[fin + '::' + bk]).find(Boolean) || null;
     const rawProducts = uniq(frows.map(r=>r.ASSIGNED_PRODUCT).filter(Boolean));
     let status;
     if (linkedFin) status = 'Resolved (Cross-FIN Match)';
     else if (netD<=0 && netC<=0 && (returns.length>0||credits.length>0)) status='No Activity (Fully Returned/Credited)';
+    else if (netD===0 && netC>0 && pharmacyEvents.length>0) status='Charged — Pharmacy-Only Activity (No Device Dispense)';
     else if (netD===0 && netC>0) status='No Dispense on File';
     else if (diff>0) status='Missing Charge(s)';
     else if (diff<0) status='Extra Charge / Review';
@@ -1381,12 +1871,14 @@ function parseSheetToReport(rows) {
       status, ndcMatch, dispenseNdcs: dNdcs.join('; '), chargeNdcs: cNdcs.join('; '),
       dispenseDates: dispenses.map(d=>d.EVENT_DT_TM).join('; '), chargeDates: charges.map(c=>c.EVENT_DT_TM).join('; '),
       returnDates: returns.map(r=>r.EVENT_DT_TM).join('; '), creditDates: credits.map(c=>c.EVENT_DT_TM).join('; '),
+      pharmacyEvents: pharmacyEvents.map(p => `${p.EVENT_TYPE} @ ${p.EVENT_DT_TM || '?'}`),
       genericName: genericNameOf(first), product: rawProducts.join(' / ') || (first.ASSIGNED_PRODUCT||''),
       strengthMismatch: rawProducts.length > 1,
       orderIds: uniq(frows.map(r=>r.ORDER_ID)).join('; '),
       pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null
     };
   });
+  return { reportRows, crossFinWarnings };
 }
 
 // Splits one CSV line into cells, honoring double-quoted fields (so a comma
@@ -1439,7 +1931,10 @@ function handleFile(file) {
         const sheet = wb.Sheets[wb.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json(sheet, {defval:null, raw:false});
       }
-      REPORT = parseSheetToReport(rows);
+      const parsed = parseSheetToReport(rows);
+      REPORT = parsed.reportRows;
+      CROSS_FIN_WARNINGS = parsed.crossFinWarnings;
+      BCMA_DATE_RANGE = computeDateRange(rows, 'EVENT_DT_TM');
       state.expanded = new Set();
       state.products = null;
       state.knownProducts = null;
@@ -1512,12 +2007,12 @@ function initEvents() {
     const allProducts = allDrugLabels();
     state.products = new Set(allProducts);
     populateProductFilter();
-    renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderDetailTable();
+    renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderCrossFinWarnings(); renderDetailTable();
   });
   document.getElementById('productSelectNone').addEventListener('click', () => {
     state.products = new Set();
     populateProductFilter();
-    renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderDetailTable();
+    renderCards(); renderMedTable(); renderPyxisSideViews(); renderUnaccounted(); renderCrossFinWarnings(); renderDetailTable();
   });
 
   document.getElementById('showAllBtn').addEventListener('click', () => {
