@@ -1275,12 +1275,12 @@ function renderDetailTable() {
   let body = rows.map(r => {
     const meta = STATUS_META[r.status];
     const rowCls = meta.cls === 'red' ? 'row-red' : meta.cls === 'amber' ? 'row-amber' : meta.cls === 'teal' ? 'row-teal' : meta.cls === 'slate' ? 'row-slate' : '';
-    const isExpanded = state.expanded.has(r.fin);
+    const isExpanded = state.expanded.has(r.rowKey);
     const ndcApplicable = r.dispenseNdcs && r.chargeNdcs;
     const ndcIcon = !ndcApplicable ? '<span class="muted">n/a</span>' : (r.ndcMatch ? '✅' : '🧪');
     const pStatus = r.pyxisStatus || 'N/A';
     const pyxisIcon = pStatus === 'Verified' ? '🛡️' : pStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : (pStatus.indexOf('Partial') === 0 ? '<span class="badge amber">◐</span>' : '<span class="muted">—</span>');
-    let html = `<tr class="${rowCls}" style="cursor:pointer" data-fin="${escapeHtml(r.fin)}">
+    let html = `<tr class="${rowCls}" style="cursor:pointer" data-fin="${escapeHtml(r.fin)}" data-rowkey="${escapeHtml(r.rowKey)}">
       <td class="mono">${escapeHtml(r.fin)}</td>
       <td class="mono muted">${escapeHtml(r.admIds)}</td>
       <td>${escapeHtml(r.patient)}</td>
@@ -1340,8 +1340,8 @@ function renderDetailTable() {
   });
   document.querySelectorAll('#detailTable tbody tr[data-fin]').forEach(tr => {
     tr.addEventListener('click', () => {
-      const fin = tr.getAttribute('data-fin');
-      if (state.expanded.has(fin)) state.expanded.delete(fin); else state.expanded.add(fin);
+      const rowKey = tr.getAttribute('data-rowkey');
+      if (state.expanded.has(rowKey)) state.expanded.delete(rowKey); else state.expanded.add(rowKey);
       renderDetailTable();
     });
   });
@@ -1773,6 +1773,11 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, inde
       candidates = indexes.byPatientDay[pKey] || [];
       locBasis = 'Patient+Day';
     }
+    // A single FIN can carry more than one drug (e.g. one anesthesia case FIN
+    // with both fentanyl and midazolam). Without this filter, every drug's
+    // Pyxis activity for that FIN/day leaked into every other drug's evidence
+    // panel. Same identity test as the match below, minus the type filter.
+    candidates = candidates.filter(t => admIdMatches(t.MED_ID, admIds) || drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName));
     if (candidates.length > 0) anyCandidates = true;
     candidates.forEach(t => seenTxns.push(`${t.MED_ID || '(no Med ID)'}${t.GENERIC_NAME ? ' / ' + t.GENERIC_NAME : ''} — ${t.TRANSACTION_TYPE || '?'} @ ${t.TRANSACTION_DT || '?'}`));
 
@@ -1973,7 +1978,7 @@ function parseSheetToReport(rows) {
     else if (diff<0) status='Extra Charge / Review';
     else status = (dNdcs.length === 0 && cNdcs.length === 0) ? 'Balanced' : (ndcMatch ? 'Balanced' : 'Balanced (NDC Mismatch)');
     return {
-      fin, linkedFin, admIds: uniq(frows.map(r=>r.ADM_ID).filter(Boolean)).join('; '),
+      fin, rowKey: groupKey, linkedFin, admIds: uniq(frows.map(r=>r.ADM_ID).filter(Boolean)).join('; '),
       dispenseAdmIds: uniq(dispenses.map(d=>d.ADM_ID).filter(Boolean)),
       returnAdmIds: uniq(returns.map(r=>r.ADM_ID).filter(Boolean)),
       patient: first.PATIENT_NAME||'', facility: first.FACILITY||'', unit: first.NURSE_UNIT||'',
