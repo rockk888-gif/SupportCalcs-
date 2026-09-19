@@ -199,7 +199,7 @@
       <div id="dropzone">
         <div class="icon">📄</div>
         <div><b>Drag and drop</b> a BCMA reconciliation Excel/CSV export here</div>
-        <div class="hint">Expected columns: FIN, ADM_ID, PATIENT_NAME, EVENT_TYPE, EVENT_DT_TM, NDC, ASSIGNED_PRODUCT, NURSE_UNIT, FACILITY, ORDER_ID, EDIPI/MRN. Optional: Formulary Generic Name (groups strengths of the same drug together and is the fuzzy fallback for Pyxis matching).</div>
+        <div class="hint">Expected columns: FIN, ADM_ID, PATIENT_NAME, EVENT_TYPE, EVENT_DT_TM, NDC, ASSIGNED_PRODUCT, NURSE_UNIT, FACILITY, ORDER_ID, EDIPI/MRN. Optional: Formulary Generic Name (groups strengths of the same drug together and is the fuzzy fallback for Pyxis matching), DOSE_ADMINISTERED (enables a Pulled vs. Administered vs. Wasted quantity check, e.g. "6 mg" or "2 tab(s)").</div>
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none">
       </div>
     </div>
@@ -347,6 +347,11 @@ let REPORT = [];
 let CROSS_FIN_WARNINGS = [];
 let BCMA_DATE_RANGE = null;
 let PYXIS_DATE_RANGE = null;
+// True when the loaded BCMA file has a DOSE_ADMINISTERED column at all -- an
+// optional field, so the whole dose-balance feature (a numeric pulled vs.
+// wasted vs. administered check) stays hidden rather than showing misleading
+// zeros when a site's export doesn't carry it.
+let DOSE_COLUMN_PRESENT = false;
 
 const STATUS_META = {
   'Missing Charge(s)': {cls:'red', order:0},
@@ -377,6 +382,10 @@ const UNRESOLVED_STATUSES = new Set(['Missing Charge(s)', 'No Dispense on File',
 const PYXIS_TYPE_SPECS = {
   remove: { include: ['remove'], exclude: ['cancel'] },
   return: { include: ['return', 'restock', 'refill', 'waste'], exclude: ['cancel'] },
+  // Isolates just Waste out of the broader 'return' bucket above, which also
+  // includes restock/refill -- those add stock back to the pocket and aren't
+  // part of the pulled = administered + wasted quantity balance below.
+  waste: { include: ['waste'], exclude: ['cancel'] },
   risk: { include: ['override', 'discrepancy'], exclude: [] },
   internalMovement: { include: ['destock', 'reallocate'], exclude: ['cancel'] },
   patientTransfer: { include: ['myitemstransferfromuser', 'myitemstransfertouser'], exclude: ['cancel'] }
@@ -1268,6 +1277,32 @@ function pyxisCheckLine(label, check) {
   </div>`;
 }
 
+// Renders the quantity-based Pulled/Wasted/Administered check as its own
+// block, same visual pattern as pyxisCheckLine above. Only called when
+// DOSE_COLUMN_PRESENT (see recomputePyxisStatus) -- check itself is null
+// whenever this FIN+drug has no charted dose to compare.
+function doseBalanceLine(check) {
+  if (!check) return '';
+  const fmt = (v) => (v === null || v === undefined || isNaN(v)) ? '—' : (Math.round(v * 1000) / 1000).toString();
+  if (check.status === 'No Pyxis File' || check.status === 'No Pyxis Quantity Data') {
+    return `<div class="pyxis-check-block">
+      <div class="pyxis-check-verdict">Dose Balance: <span class="badge slate">${escapeHtml(check.status)}</span> <span class="muted">administered ${fmt(check.administered)} ${escapeHtml(check.uom||'')}</span></div>
+    </div>`;
+  }
+  if (check.status === 'Unit Mismatch') {
+    return `<div class="pyxis-check-block">
+      <div class="pyxis-check-verdict">Dose Balance: <span class="badge amber">Unit Mismatch</span> <span class="muted">units differ across BCMA/Pyxis — cannot compute a numeric balance</span></div>
+      <div class="pyxis-check-evidence">Pulled ${fmt(check.pulled)} ${escapeHtml(check.pulledUom||'')} &nbsp;|&nbsp; Administered ${fmt(check.administered)} ${escapeHtml(check.administeredUom||'')} &nbsp;|&nbsp; Wasted ${fmt(check.wasted)} ${escapeHtml(check.wastedUom||'')}</div>
+    </div>`;
+  }
+  const statusCls = check.status === 'Balanced' ? 'green' : 'red';
+  const gapNote = check.balanced ? '' : ` <span class="muted">off by ${fmt(Math.abs(check.gap))} ${escapeHtml(check.uom||'')}</span>`;
+  return `<div class="pyxis-check-block">
+    <div class="pyxis-check-verdict">Dose Balance: <span class="badge ${statusCls}">${escapeHtml(check.status)}</span>${gapNote}</div>
+    <div class="pyxis-check-evidence">Pulled ${fmt(check.pulled)} ${escapeHtml(check.uom||'')} = Administered ${fmt(check.administered)} ${escapeHtml(check.uom||'')} + Wasted ${fmt(check.wasted)} ${escapeHtml(check.uom||'')}</div>
+  </div>`;
+}
+
 function renderDetailTable() {
   renderResolutionSummary();
   const rows = filteredSorted();
@@ -1293,9 +1328,9 @@ function renderDetailTable() {
       <td class="center no-print">${isExpanded?'▲':'▼'}</td>
     </tr>`;
     if (isExpanded) {
-      const pyxisDetail = (r.pyxisDispenseCheck || r.pyxisReturnCheck)
+      const pyxisDetail = ((r.pyxisDispenseCheck || r.pyxisReturnCheck)
         ? pyxisCheckLine('Dispense vs. Pyxis Remove', r.pyxisDispenseCheck) + pyxisCheckLine('Return vs. Pyxis Return/Restock/Waste', r.pyxisReturnCheck)
-        : (PYXIS_TXNS ? 'No device dispense/return on this FIN to verify.' : 'No Pyxis file loaded.');
+        : (PYXIS_TXNS ? 'No device dispense/return on this FIN to verify.' : 'No Pyxis file loaded.')) + doseBalanceLine(r.doseBalance);
       html += `<tr class="detail-row"><td colspan="10">
         <div class="detail-grid">
           <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.genericName)}${r.strengthMismatch ? `<div class="muted" style="margin-top:2px;">⚠ Strength/formulation mismatch — charted as: <span class="mono">${escapeHtml(r.product)}</span> — verify charting</div>` : ''}</div></div>
@@ -1390,6 +1425,11 @@ function exportToExcel() {
     'Pyxis Dispense Activity Seen': (r.pyxisDispenseCheck && r.pyxisDispenseCheck.seenTxns) ? r.pyxisDispenseCheck.seenTxns.join(' | ') : '',
     'Pyxis Return Check': pyxisCheckExportText(r.pyxisReturnCheck),
     'Pyxis Return Activity Seen': (r.pyxisReturnCheck && r.pyxisReturnCheck.seenTxns) ? r.pyxisReturnCheck.seenTxns.join(' | ') : '',
+    'Dose Balance Status': r.doseBalance ? r.doseBalance.status : '',
+    'Dose Pulled (Pyxis)': r.doseBalance && r.doseBalance.pulled !== undefined ? r.doseBalance.pulled : '',
+    'Dose Administered (BCMA net of credits)': r.doseBalance ? r.doseBalance.administered : '',
+    'Dose Wasted (Pyxis)': r.doseBalance && r.doseBalance.wasted !== undefined ? r.doseBalance.wasted : '',
+    'Dose UOM': r.doseBalance ? (r.doseBalance.uom || r.doseBalance.administeredUom || '') : '',
     'Order ID(s)': r.orderIds
   }));
 
@@ -1796,9 +1836,112 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, inde
   return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis, seenTxns: uniqueSeen, fuzzyRisk };
 }
 
+// ============ DOSE BALANCE (pulled vs. administered vs. wasted, by quantity) ============
+// Everything above this point reconciles by EVENT COUNT -- a charge shows "1"
+// meaning one charge event happened, not one full dose. A nurse can pull 10mg,
+// give 6mg, and waste 4mg, and the count-based check above sees that as clean
+// as long as a Dispense, a Charge, and a Waste row all exist. This section adds
+// a second, independent check that instead sums actual amounts (BCMA's
+// DOSE_ADMINISTERED vs. Pyxis's Quantity on Remove/Waste), to catch a real
+// diversion signal the event-count check structurally cannot see: dose math
+// that doesn't add up even though every expected event is present.
+
+// Parses a combined "<number> <unit>" cell like "6 mg", "2 tab(s)", "0.5mL"
+// into {value, unit}. Returns null for blank/non-numeric cells so callers can
+// tell "no dose charted" apart from "charted as zero".
+function parseDoseAmount(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = raw.toString().trim();
+  if (!s) return null;
+  const m = s.match(/^(-?\d+(?:\.\d+)?)\s*(.*)$/);
+  if (!m) return null;
+  const value = parseFloat(m[1]);
+  if (isNaN(value)) return null;
+  return { value, unit: normDoseUnit(m[2]) };
+}
+
+// Normalizes a unit string for comparison so "tab(s)", "tabs", "mL", "ml" etc.
+// compare equal. Not a full unit-conversion table -- mg is never reconciled
+// against mL -- just tolerant of casing/pluralization/parens on the same unit.
+function normDoseUnit(u) {
+  return (u || '').toString().toLowerCase().replace(/\(s\)/g, '').replace(/s\b/g, '').replace(/[^a-z]/g, '').trim();
+}
+
+// Sums parsed dose amounts across a set of BCMA event rows (e.g. all Charge on
+// Administration rows for one FIN+drug), tracking whether every row agreed on
+// a unit so a silent mg-vs-mL sum never happens.
+function sumDoseAmounts(evRows) {
+  let total = 0, uom = null, mixedUnits = false, parsedCount = 0;
+  evRows.forEach(r => {
+    const parsed = parseDoseAmount(r.DOSE_ADMINISTERED);
+    if (!parsed) return;
+    parsedCount++;
+    if (uom === null) uom = parsed.unit;
+    else if (parsed.unit && parsed.unit !== uom) mixedUnits = true;
+    total += parsed.value;
+  });
+  return { total, uom, mixedUnits, parsedCount };
+}
+
+// Sums Pyxis Quantity for the transactions that plausibly belong to this
+// row's drug, split into Remove ("pulled") and Waste. Uses FIN + drug identity
+// only (the same primary tier as checkEventAgainstPyxis) -- deliberately no
+// Patient+Day fallback here, since a quantity balance is worth less than a
+// count-based flag if it's built on a weaker match.
+function computeDosePyxisQuantities(r, indexes) {
+  const finTxns = indexes.byFin[r.fin] || [];
+  const candidates = finTxns.filter(t => admIdMatches(t.MED_ID, r.allAdmIds) || drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName));
+  const sumQty = (txns) => {
+    let total = 0, uom = null, mixedUnits = false, parsedCount = 0;
+    txns.forEach(t => {
+      const v = parseFloat(t.QUANTITY);
+      if (isNaN(v)) return;
+      parsedCount++;
+      const u = normDoseUnit(t.QTY_UOM);
+      if (uom === null) uom = u;
+      else if (u && u !== uom) mixedUnits = true;
+      total += v;
+    });
+    return { total, uom, mixedUnits, parsedCount };
+  };
+  return {
+    pulled: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'remove'))),
+    wasted: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'waste')))
+  };
+}
+
+// Compares Pyxis Remove quantity ("pulled") against BCMA administered dose
+// plus Pyxis Waste quantity ("accounted for"). Returns null when there's
+// nothing on the BCMA side to compare (no DOSE_ADMINISTERED parsed for this
+// FIN+drug) -- most rows with no charge activity fall here and the block is
+// simply not shown, rather than rendering a misleading zero.
+function computeDoseBalance(r, indexes) {
+  const admin = r.administeredDose;
+  if (!admin || admin.parsedCount === 0) return null;
+  if (!indexes) return { status: 'No Pyxis File', administered: admin.total, uom: admin.uom };
+
+  const { pulled, wasted } = computeDosePyxisQuantities(r, indexes);
+  if (pulled.parsedCount === 0) return { status: 'No Pyxis Quantity Data', administered: admin.total, uom: admin.uom };
+
+  const units = [admin.uom, pulled.uom, wasted.parsedCount > 0 ? wasted.uom : null].filter(Boolean);
+  const unitsConsistent = units.every(u => u === units[0]);
+  if (!unitsConsistent || admin.mixedUnits || pulled.mixedUnits || wasted.mixedUnits) {
+    return { status: 'Unit Mismatch', administered: admin.total, administeredUom: admin.uom, pulled: pulled.total, pulledUom: pulled.uom, wasted: wasted.total, wastedUom: wasted.uom };
+  }
+
+  const accountedFor = admin.total + wasted.total;
+  const gap = Math.round((pulled.total - accountedFor) * 10000) / 10000;
+  const TOL = 0.01;
+  const balanced = Math.abs(gap) <= TOL;
+  return { status: balanced ? 'Balanced' : 'Discrepancy', pulled: pulled.total, wasted: wasted.total, administered: admin.total, uom: admin.uom, gap, balanced };
+}
+
 function recomputePyxisStatus() {
   if (!PYXIS_TXNS) {
-    REPORT.forEach(r => { r.pyxisStatus = 'N/A'; r.pyxisDispenseCheck = null; r.pyxisReturnCheck = null; });
+    REPORT.forEach(r => {
+      r.pyxisStatus = 'N/A'; r.pyxisDispenseCheck = null; r.pyxisReturnCheck = null;
+      r.doseBalance = DOSE_COLUMN_PRESENT ? computeDoseBalance(r, null) : null;
+    });
     return;
   }
   const indexes = buildPyxisIndexes(PYXIS_TXNS);
@@ -1810,6 +1953,7 @@ function recomputePyxisStatus() {
     const returnCheck = r.returns > 0 ? checkEventAgainstPyxis(r, r.returnDates, r.returnAdmIds, PYXIS_EXPECTED['Device Return'], indexes) : null;
     r.pyxisDispenseCheck = dispenseCheck;
     r.pyxisReturnCheck = returnCheck;
+    r.doseBalance = DOSE_COLUMN_PRESENT ? computeDoseBalance(r, indexes) : null;
 
     const checks = [dispenseCheck, returnCheck].filter(Boolean);
     if (checks.length === 0) r.pyxisStatus = 'N/A';
@@ -1962,6 +2106,18 @@ function parseSheetToReport(rows) {
     const diff = netD - netC;
     const dNdcs = uniq(dispenses.map(d=>d.NDC).filter(Boolean));
     const cNdcs = uniq(charges.map(c=>c.NDC).filter(Boolean));
+    // Net administered dose = charted charge amounts minus any Credit on
+    // Administration amounts (a credit reverses a dose already charted, same
+    // as it reverses a charge count above). Only meaningful when the file
+    // actually carries DOSE_ADMINISTERED and this FIN+drug's charges parsed.
+    const chargeDoseSum = sumDoseAmounts(charges);
+    const creditDoseSum = sumDoseAmounts(credits);
+    const administeredDose = chargeDoseSum.parsedCount > 0 ? {
+      total: chargeDoseSum.total - creditDoseSum.total,
+      uom: chargeDoseSum.uom || creditDoseSum.uom,
+      mixedUnits: chargeDoseSum.mixedUnits || creditDoseSum.mixedUnits || (chargeDoseSum.uom && creditDoseSum.uom && chargeDoseSum.uom !== creditDoseSum.uom),
+      parsedCount: chargeDoseSum.parsedCount
+    } : null;
     const ndcMatch = dNdcs.length>0 && cNdcs.length>0 && dNdcs.every(n=>cNdcs.includes(n)) && cNdcs.every(n=>dNdcs.includes(n));
     // Cross-FIN links are now keyed by drug+day+unit, not just drug -- a FIN can in
     // principle appear in more than one such bucket (different days/units), so we
@@ -1979,6 +2135,7 @@ function parseSheetToReport(rows) {
     else status = (dNdcs.length === 0 && cNdcs.length === 0) ? 'Balanced' : (ndcMatch ? 'Balanced' : 'Balanced (NDC Mismatch)');
     return {
       fin, rowKey: groupKey, linkedFin, admIds: uniq(frows.map(r=>r.ADM_ID).filter(Boolean)).join('; '),
+      allAdmIds: uniq(frows.map(r=>r.ADM_ID).filter(Boolean)),
       dispenseAdmIds: uniq(dispenses.map(d=>d.ADM_ID).filter(Boolean)),
       returnAdmIds: uniq(returns.map(r=>r.ADM_ID).filter(Boolean)),
       patient: first.PATIENT_NAME||'', facility: first.FACILITY||'', unit: first.NURSE_UNIT||'',
@@ -1991,7 +2148,8 @@ function parseSheetToReport(rows) {
       genericName: genericNameOf(first), product: rawProducts.join(' / ') || (first.ASSIGNED_PRODUCT||''),
       strengthMismatch: rawProducts.length > 1,
       orderIds: uniq(frows.map(r=>r.ORDER_ID)).join('; '),
-      pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null
+      administeredDose,
+      pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null, doseBalance: null
     };
   });
   return { reportRows, crossFinWarnings };
@@ -2047,6 +2205,7 @@ function handleFile(file) {
         const sheet = wb.Sheets[wb.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json(sheet, {defval:null, raw:false});
       }
+      DOSE_COLUMN_PRESENT = rows.some(r => r.DOSE_ADMINISTERED !== undefined && r.DOSE_ADMINISTERED !== null && r.DOSE_ADMINISTERED.toString().trim() !== '');
       const parsed = parseSheetToReport(rows);
       REPORT = parsed.reportRows;
       CROSS_FIN_WARNINGS = parsed.crossFinWarnings;
