@@ -634,6 +634,7 @@ function renderCallouts() {
     <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two FINs for the same patient, same drug, same day, same unit — rescheduling, registration changes, or an appointment mishap. A pair is only auto-resolved when exactly two FINs share that bucket and their dispense/charge activity nets to exactly zero between them; anything more ambiguous (more than two FINs, or nets that don't cancel) is left unresolved and surfaced in "Cross-FIN Groups Needing Review" instead of being silently paired.</div></div>
     <div class="callout blue"><span>🧪</span><div><b>NDC crosswalk:</b> Where dispense and charge counts match but NDCs differ, it's flagged as <b>Balanced (NDC Mismatch)</b> — the pairing is complete, but pharmacy/billing should confirm whether the NDC difference is an expected package-to-billing-unit mapping.</div></div>
     <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text) using word-boundary token matching (not raw substring containment, which would wrongly match unrelated drugs like epinephrine/norepinephrine) — this still confirms a dispense/charge that's the right drug charted at the wrong strength or salt form, flagged separately as a formulation note rather than treated as silently identical. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
+    ${DOSE_COLUMN_PRESENT ? `<div class="callout blue"><span>⚖️</span><div><b>Dose Balance (quantity, not event count):</b> Everything above counts events -- a charge showing "1" means one charge happened, not one full dose. This check instead sums actual amounts: BCMA's <b>DOSE_ADMINISTERED</b> (net of any Credit on Administration, which reverses a charted dose the same way it reverses a charge count) against Pyxis's <b>Quantity</b> on Remove ("pulled") and Waste. <b>Balanced</b> = Pulled equals Administered + Wasted. <b>Discrepancy</b> = they don't add up -- a real diversion signal the event-count check above cannot see even when every expected event is present. <b>Unit Mismatch</b> = BCMA and Pyxis disagree on unit (e.g. mg vs. mL), so no numeric comparison is made rather than risk comparing incompatible units. Uses the same FIN-first, Patient+Day-fallback matching as the Pyxis cross-check above, so a cross-FIN split resolves correctly instead of falsely reading as missing data.</div></div>` : ''}
   `;
 }
 
@@ -1243,10 +1244,18 @@ function renderResolutionSummary() {
   const unresolved = scoped.filter(r => UNRESOLVED_STATUSES.has(r.status)).length;
   const total = scoped.length;
   const pct = total > 0 ? Math.round((resolved/total)*100) : 0;
+  // Dose Balance is a separate check from the count-based status above -- a
+  // row can show "resolved" here (every expected event is present) while
+  // still carrying a real quantity discrepancy, which the resolved/unresolved
+  // counts alone would never surface. Called out on its own so it can't hide
+  // inside an otherwise-clean-looking FIN.
+  const doseDiscrepancies = DOSE_COLUMN_PRESENT ? scoped.filter(r => r.doseBalance && r.doseBalance.status === 'Discrepancy').length : 0;
+  const doseNote = DOSE_COLUMN_PRESENT ? `<div><span class="badge ${doseDiscrepancies>0?'red':'slate'}">${doseDiscrepancies} dose discrepanc${doseDiscrepancies===1?'y':'ies'}</span></div>` : '';
   document.getElementById('resolutionSummary').innerHTML = `
     <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; font-size:13px;">
       <div><span class="badge green">${resolved} resolved</span></div>
       <div><span class="badge red">${unresolved} unresolved</span></div>
+      ${doseNote}
       <div class="muted">${pct}% of ${total} FIN${total===1?'':'s'} fully explained</div>
     </div>`;
   document.getElementById('detailTitle').textContent = state.showUnresolvedOnly
@@ -1289,16 +1298,17 @@ function doseBalanceLine(check) {
       <div class="pyxis-check-verdict">Dose Balance: <span class="badge slate">${escapeHtml(check.status)}</span> <span class="muted">administered ${fmt(check.administered)} ${escapeHtml(check.uom||'')}</span></div>
     </div>`;
   }
+  const basisNote = check.basis ? ` <span class="muted">matched by ${escapeHtml(check.basis)}</span>` : '';
   if (check.status === 'Unit Mismatch') {
     return `<div class="pyxis-check-block">
-      <div class="pyxis-check-verdict">Dose Balance: <span class="badge amber">Unit Mismatch</span> <span class="muted">units differ across BCMA/Pyxis — cannot compute a numeric balance</span></div>
+      <div class="pyxis-check-verdict">Dose Balance: <span class="badge amber">Unit Mismatch</span>${basisNote} <span class="muted">units differ across BCMA/Pyxis — cannot compute a numeric balance</span></div>
       <div class="pyxis-check-evidence">Pulled ${fmt(check.pulled)} ${escapeHtml(check.pulledUom||'')} &nbsp;|&nbsp; Administered ${fmt(check.administered)} ${escapeHtml(check.administeredUom||'')} &nbsp;|&nbsp; Wasted ${fmt(check.wasted)} ${escapeHtml(check.wastedUom||'')}</div>
     </div>`;
   }
   const statusCls = check.status === 'Balanced' ? 'green' : 'red';
   const gapNote = check.balanced ? '' : ` <span class="muted">off by ${fmt(Math.abs(check.gap))} ${escapeHtml(check.uom||'')}</span>`;
   return `<div class="pyxis-check-block">
-    <div class="pyxis-check-verdict">Dose Balance: <span class="badge ${statusCls}">${escapeHtml(check.status)}</span>${gapNote}</div>
+    <div class="pyxis-check-verdict">Dose Balance: <span class="badge ${statusCls}">${escapeHtml(check.status)}</span>${basisNote}${gapNote}</div>
     <div class="pyxis-check-evidence">Pulled ${fmt(check.pulled)} ${escapeHtml(check.uom||'')} = Administered ${fmt(check.administered)} ${escapeHtml(check.uom||'')} + Wasted ${fmt(check.wasted)} ${escapeHtml(check.uom||'')}</div>
   </div>`;
 }
@@ -1307,6 +1317,7 @@ function renderDetailTable() {
   renderResolutionSummary();
   const rows = filteredSorted();
   const arrow = (f) => state.sortField===f ? (state.sortDir==='asc'?' ▲':' ▼') : '';
+  const colCount = DOSE_COLUMN_PRESENT ? 11 : 10;
   let body = rows.map(r => {
     const meta = STATUS_META[r.status];
     const rowCls = meta.cls === 'red' ? 'row-red' : meta.cls === 'amber' ? 'row-amber' : meta.cls === 'teal' ? 'row-teal' : meta.cls === 'slate' ? 'row-slate' : '';
@@ -1315,6 +1326,8 @@ function renderDetailTable() {
     const ndcIcon = !ndcApplicable ? '<span class="muted">n/a</span>' : (r.ndcMatch ? '✅' : '🧪');
     const pStatus = r.pyxisStatus || 'N/A';
     const pyxisIcon = pStatus === 'Verified' ? '🛡️' : pStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : (pStatus.indexOf('Partial') === 0 ? '<span class="badge amber">◐</span>' : '<span class="muted">—</span>');
+    const dbStatus = r.doseBalance ? r.doseBalance.status : null;
+    const doseIcon = dbStatus === 'Balanced' ? '⚖️' : dbStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : dbStatus === 'Unit Mismatch' ? '<span class="badge amber">≠</span>' : '<span class="muted">—</span>';
     let html = `<tr class="${rowCls}" style="cursor:pointer" data-fin="${escapeHtml(r.fin)}" data-rowkey="${escapeHtml(r.rowKey)}">
       <td class="mono">${escapeHtml(r.fin)}</td>
       <td class="mono muted">${escapeHtml(r.admIds)}</td>
@@ -1324,6 +1337,7 @@ function renderDetailTable() {
       <td class="center">${r.rawCharge}${r.credits>0?` <span class="muted">→ ${r.netCharge}</span>`:''}</td>
       <td class="center">${ndcIcon}</td>
       <td class="center">${pyxisIcon}</td>
+      ${DOSE_COLUMN_PRESENT ? `<td class="center">${doseIcon}</td>` : ''}
       <td><span class="badge ${meta.cls === 'slate' ? 'slate' : meta.cls}">${escapeHtml(r.status)}</span></td>
       <td class="center no-print">${isExpanded?'▲':'▼'}</td>
     </tr>`;
@@ -1331,7 +1345,7 @@ function renderDetailTable() {
       const pyxisDetail = ((r.pyxisDispenseCheck || r.pyxisReturnCheck)
         ? pyxisCheckLine('Dispense vs. Pyxis Remove', r.pyxisDispenseCheck) + pyxisCheckLine('Return vs. Pyxis Return/Restock/Waste', r.pyxisReturnCheck)
         : (PYXIS_TXNS ? 'No device dispense/return on this FIN to verify.' : 'No Pyxis file loaded.')) + doseBalanceLine(r.doseBalance);
-      html += `<tr class="detail-row"><td colspan="10">
+      html += `<tr class="detail-row"><td colspan="${colCount}">
         <div class="detail-grid">
           <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.genericName)}${r.strengthMismatch ? `<div class="muted" style="margin-top:2px;">⚠ Strength/formulation mismatch — charted as: <span class="mono">${escapeHtml(r.product)}</span> — verify charting</div>` : ''}</div></div>
           <div><div class="field-label">Facility</div><div class="field-value">${escapeHtml(r.facility)}</div></div>
@@ -1359,10 +1373,11 @@ function renderDetailTable() {
       <th class="center">Chg (raw→net)</th>
       <th class="center">NDC</th>
       <th class="center">Pyxis</th>
+      ${DOSE_COLUMN_PRESENT ? '<th class="center">Dose</th>' : ''}
       <th data-sort="status">Status${arrow('status')}</th>
       <th class="no-print"></th>
     </tr></thead>
-    <tbody>${body || `<tr><td colspan="10" style="text-align:center; padding:20px; color:#94a3b8;">${REPORT.length === 0 ? 'Load a BCMA export above to see FIN-level detail.' : 'No FINs match your filters.'}</td></tr>`}</tbody>
+    <tbody>${body || `<tr><td colspan="${colCount}" style="text-align:center; padding:20px; color:#94a3b8;">${REPORT.length === 0 ? 'Load a BCMA export above to see FIN-level detail.' : 'No FINs match your filters.'}</td></tr>`}</tbody>
   `;
 
   document.querySelectorAll('#detailTable th[data-sort]').forEach(th => {
@@ -1757,8 +1772,18 @@ function isTokenPrefix(shorter, longer) {
 }
 
 function drugMatches(pyxisText, bcmaGenericName) {
-  const medTokens = coreDrugTokens(tokenizeDrugName(pyxisText));
-  const prodTokens = coreDrugTokens(tokenizeDrugName(bcmaGenericName));
+  // Strength/unit tokens are stripped on both sides before tokenizing. BCMA's
+  // genericName has typically already been through stripStrength (via
+  // genericNameOf), but Pyxis's raw GENERIC_NAME/MED_ID text hasn't -- without
+  // stripping it here too, "midazolam 1 MG/1 ML (10 ML) Injection" tokenizes to
+  // [midazolam,1,mg,1,ml,10,ml,injection] while the already-stripped BCMA side
+  // is just [midazolam,injection], so isTokenPrefix below fails on the very
+  // first real drug it's asked to fuzzy-match -- confirmed against a synthetic
+  // cross-FIN case where ADM_ID legitimately differs between the two linked
+  // FINs (different order IDs) and the fuzzy tier is the only thing that can
+  // confirm drug identity, exactly the scenario it exists for.
+  const medTokens = coreDrugTokens(tokenizeDrugName(stripStrength(pyxisText)));
+  const prodTokens = coreDrugTokens(tokenizeDrugName(stripStrength(bcmaGenericName)));
   if (medTokens.length === 0 || prodTokens.length === 0) return false;
   if (medTokens.join(' ') === prodTokens.join(' ')) return true;
   const [shorter, longer] = medTokens.length <= prodTokens.length ? [medTokens, prodTokens] : [prodTokens, medTokens];
@@ -1784,8 +1809,13 @@ function drugMatches(pyxisText, bcmaGenericName) {
 //                   that row, which is worth a second look regardless of drug.
 //   null          — exact match (nothing to flag) or no match.
 function drugMatchFuzzyRisk(pyxisText, bcmaGenericName) {
-  const medRaw = tokenizeDrugName(pyxisText);
-  const prodRaw = tokenizeDrugName(bcmaGenericName);
+  // Same strip-both-sides fix as drugMatches above -- without it, an exact
+  // same-drug-same-strength match (one side just still carrying its raw
+  // strength text) would misclassify as a 'classname'-level risk purely
+  // because the raw and pre-stripped token counts differ, not because the
+  // drugs actually differ.
+  const medRaw = tokenizeDrugName(stripStrength(pyxisText));
+  const prodRaw = tokenizeDrugName(stripStrength(bcmaGenericName));
   const medCore = coreDrugTokens(medRaw);
   const prodCore = coreDrugTokens(prodRaw);
   if (medCore.length === 0 || prodCore.length === 0) return null;
@@ -1884,13 +1914,34 @@ function sumDoseAmounts(evRows) {
 }
 
 // Sums Pyxis Quantity for the transactions that plausibly belong to this
-// row's drug, split into Remove ("pulled") and Waste. Uses FIN + drug identity
-// only (the same primary tier as checkEventAgainstPyxis) -- deliberately no
-// Patient+Day fallback here, since a quantity balance is worth less than a
-// count-based flag if it's built on a weaker match.
+// row's drug, split into Remove ("pulled") and Waste. Uses the same two-tier
+// location basis as checkEventAgainstPyxis: FIN first, falling back to
+// Patient+Day (checked across every day this FIN+drug has BCMA activity) when
+// the FIN itself has no matching Pyxis activity. Without this fallback, a
+// cross-FIN split -- the same encounter's dose split across two FINs for the
+// same patient (rescheduling, registration changes) that the count-based
+// check already resolves via crossFinMap -- would read as "no Pyxis quantity
+// data" here just because the actual pull landed on the other, linked FIN.
 function computeDosePyxisQuantities(r, indexes) {
+  const identityMatch = t => admIdMatches(t.MED_ID, r.allAdmIds) || drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName);
   const finTxns = indexes.byFin[r.fin] || [];
-  const candidates = finTxns.filter(t => admIdMatches(t.MED_ID, r.allAdmIds) || drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName));
+  let candidates = finTxns.filter(identityMatch);
+  let basis = 'FIN';
+  if (candidates.length === 0) {
+    const days = [...new Set([r.dispenseDates, r.chargeDates, r.returnDates, r.creditDates]
+      .join(';').split(';').map(s => dateOnly(s.trim())).filter(Boolean))];
+    const seen = new Set();
+    const fallback = [];
+    days.forEach(day => {
+      const pKey = normName(r.patient) + '::' + day;
+      (indexes.byPatientDay[pKey] || []).forEach(t => {
+        const k = (t.TRANSACTION_DT||'') + '::' + (t.MED_ID||'') + '::' + (t.TRANSACTION_TYPE||'') + '::' + (t.QUANTITY||'');
+        if (!seen.has(k)) { seen.add(k); fallback.push(t); }
+      });
+    });
+    candidates = fallback.filter(identityMatch);
+    basis = 'Patient+Day';
+  }
   const sumQty = (txns) => {
     let total = 0, uom = null, mixedUnits = false, parsedCount = 0;
     txns.forEach(t => {
@@ -1906,7 +1957,8 @@ function computeDosePyxisQuantities(r, indexes) {
   };
   return {
     pulled: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'remove'))),
-    wasted: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'waste')))
+    wasted: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'waste'))),
+    basis
   };
 }
 
@@ -1920,20 +1972,20 @@ function computeDoseBalance(r, indexes) {
   if (!admin || admin.parsedCount === 0) return null;
   if (!indexes) return { status: 'No Pyxis File', administered: admin.total, uom: admin.uom };
 
-  const { pulled, wasted } = computeDosePyxisQuantities(r, indexes);
+  const { pulled, wasted, basis } = computeDosePyxisQuantities(r, indexes);
   if (pulled.parsedCount === 0) return { status: 'No Pyxis Quantity Data', administered: admin.total, uom: admin.uom };
 
   const units = [admin.uom, pulled.uom, wasted.parsedCount > 0 ? wasted.uom : null].filter(Boolean);
   const unitsConsistent = units.every(u => u === units[0]);
   if (!unitsConsistent || admin.mixedUnits || pulled.mixedUnits || wasted.mixedUnits) {
-    return { status: 'Unit Mismatch', administered: admin.total, administeredUom: admin.uom, pulled: pulled.total, pulledUom: pulled.uom, wasted: wasted.total, wastedUom: wasted.uom };
+    return { status: 'Unit Mismatch', administered: admin.total, administeredUom: admin.uom, pulled: pulled.total, pulledUom: pulled.uom, wasted: wasted.total, wastedUom: wasted.uom, basis };
   }
 
   const accountedFor = admin.total + wasted.total;
   const gap = Math.round((pulled.total - accountedFor) * 10000) / 10000;
   const TOL = 0.01;
   const balanced = Math.abs(gap) <= TOL;
-  return { status: balanced ? 'Balanced' : 'Discrepancy', pulled: pulled.total, wasted: wasted.total, administered: admin.total, uom: admin.uom, gap, balanced };
+  return { status: balanced ? 'Balanced' : 'Discrepancy', pulled: pulled.total, wasted: wasted.total, administered: admin.total, uom: admin.uom, gap, balanced, basis };
 }
 
 function recomputePyxisStatus() {
