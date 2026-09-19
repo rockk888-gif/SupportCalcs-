@@ -1890,11 +1890,34 @@ function parseDoseAmount(raw) {
   return { value, unit: normDoseUnit(m[2]) };
 }
 
+// Known equivalent SPELLINGS of the same unit -- deliberately not a
+// conversion table. mg is never reconciled against g, and mcg is never
+// reconciled against mg, even though those are related units, because a
+// wrong conversion factor here could silently hide a real diversion gap or
+// manufacture a fake one. This only collapses different ways of writing the
+// identical quantity: cc is exactly mL, U.S.P. "mcg"/"ug"/the micro sign are
+// exactly the same microgram, "unit(s)"/bare "u" are the same unit count, and
+// "tab"/"tablet" are the same discrete count. Extend this only when a real
+// export is confirmed to use a spelling not covered here -- guessing at more
+// aliases without seeing the actual data risks collapsing two genuinely
+// different units together.
+// Keys are post-pluralization-strip forms only ("units"/"tabs" already reduce
+// to "unit"/"tab" by the time this table is checked below).
+const DOSE_UNIT_ALIASES = { cc: 'ml', ug: 'mcg', u: 'unit', tab: 'tablet' };
+
 // Normalizes a unit string for comparison so "tab(s)", "tabs", "mL", "ml" etc.
 // compare equal. Not a full unit-conversion table -- mg is never reconciled
-// against mL -- just tolerant of casing/pluralization/parens on the same unit.
+// against mL -- just tolerant of casing/pluralization/parens on the same unit,
+// plus the known-equivalent-spelling table above.
 function normDoseUnit(u) {
-  return (u || '').toString().toLowerCase().replace(/\(s\)/g, '').replace(/s\b/g, '').replace(/[^a-z]/g, '').trim();
+  let s = (u || '').toString().toLowerCase().trim();
+  // Micro sign (µ U+00B5) and Greek mu (μ U+03BC) paired with "g" both mean
+  // micrograms -- handled before the [^a-z] strip below, which would
+  // otherwise drop the symbol entirely and leave a bare "g" (grams), a
+  // million-fold magnitude error rather than a harmless spelling miss.
+  s = s.replace(/[μµ]g/g, 'mcg');
+  s = s.replace(/\(s\)/g, '').replace(/s\b/g, '').replace(/[^a-z]/g, '').trim();
+  return DOSE_UNIT_ALIASES[s] || s;
 }
 
 // Sums parsed dose amounts across a set of BCMA event rows (e.g. all Charge on
