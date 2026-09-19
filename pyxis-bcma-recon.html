@@ -634,7 +634,7 @@ function renderCallouts() {
     <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two FINs for the same patient, same drug, same day, same unit — rescheduling, registration changes, or an appointment mishap. A pair is only auto-resolved when exactly two FINs share that bucket and their dispense/charge activity nets to exactly zero between them; anything more ambiguous (more than two FINs, or nets that don't cancel) is left unresolved and surfaced in "Cross-FIN Groups Needing Review" instead of being silently paired.</div></div>
     <div class="callout blue"><span>🧪</span><div><b>NDC crosswalk:</b> Where dispense and charge counts match but NDCs differ, it's flagged as <b>Balanced (NDC Mismatch)</b> — the pairing is complete, but pharmacy/billing should confirm whether the NDC difference is an expected package-to-billing-unit mapping.</div></div>
     <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text) using word-boundary token matching (not raw substring containment, which would wrongly match unrelated drugs like epinephrine/norepinephrine) — this still confirms a dispense/charge that's the right drug charted at the wrong strength or salt form, flagged separately as a formulation note rather than treated as silently identical. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
-    ${DOSE_COLUMN_PRESENT ? `<div class="callout blue"><span>⚖️</span><div><b>Dose Balance (quantity, not event count):</b> Everything above counts events -- a charge showing "1" means one charge happened, not one full dose. This check instead sums actual amounts: BCMA's <b>DOSE_ADMINISTERED</b> (net of any Credit on Administration, which reverses a charted dose the same way it reverses a charge count) against Pyxis's <b>Quantity</b> on Remove ("pulled") and Waste. <b>Balanced</b> = Pulled equals Administered + Wasted. <b>Discrepancy</b> = they don't add up -- a real diversion signal the event-count check above cannot see even when every expected event is present. <b>Unit Mismatch</b> = BCMA and Pyxis disagree on unit (e.g. mg vs. mL), so no numeric comparison is made rather than risk comparing incompatible units. Uses the same FIN-first, Patient+Day-fallback matching as the Pyxis cross-check above, so a cross-FIN split resolves correctly instead of falsely reading as missing data.</div></div>` : ''}
+    ${DOSE_COLUMN_PRESENT ? `<div class="callout blue"><span>⚖️</span><div><b>Dose Balance (quantity, not event count):</b> Everything above counts events -- a charge showing "1" means one charge happened, not one full dose. This check instead sums actual amounts: BCMA's <b>DOSE_ADMINISTERED</b> (net of any Credit on Administration, which reverses a charted dose the same way it reverses a charge count) against Pyxis's <b>Quantity</b> on Remove ("pulled") and Waste. <b>Balanced</b> = Pulled equals Administered + Wasted. <b>Discrepancy</b> = they don't add up -- a real diversion signal the event-count check above cannot see even when every expected event is present. <b>Unit Mismatch</b> = BCMA and Pyxis disagree on unit with no safe way to reconcile it. Pyxis quantities are converted to whatever unit BCMA charted when that's safe: mg/mcg/g convert to each other exactly (fixed metric math), and an mL-denominated Waste or Remove (nurses often chart waste by volume) converts using that specific drug's own labeled concentration (e.g. the "50 MCG/1 ML" inside its product name) -- never a generic mL-to-mg assumption applied across drugs. Uses the same FIN-first, Patient+Day-fallback matching as the Pyxis cross-check above, so a cross-FIN split resolves correctly instead of falsely reading as missing data.</div></div>` : ''}
   `;
 }
 
@@ -1307,9 +1307,10 @@ function doseBalanceLine(check) {
   }
   const statusCls = check.status === 'Balanced' ? 'green' : 'red';
   const gapNote = check.balanced ? '' : ` <span class="muted">off by ${fmt(Math.abs(check.gap))} ${escapeHtml(check.uom||'')}</span>`;
+  const convertedNote = check.converted ? ` <span class="muted">(Pyxis quantity converted to ${escapeHtml(check.uom||'')} using that drug's labeled concentration)</span>` : '';
   return `<div class="pyxis-check-block">
     <div class="pyxis-check-verdict">Dose Balance: <span class="badge ${statusCls}">${escapeHtml(check.status)}</span>${basisNote}${gapNote}</div>
-    <div class="pyxis-check-evidence">Pulled ${fmt(check.pulled)} ${escapeHtml(check.uom||'')} = Administered ${fmt(check.administered)} ${escapeHtml(check.uom||'')} + Wasted ${fmt(check.wasted)} ${escapeHtml(check.uom||'')}</div>
+    <div class="pyxis-check-evidence">Pulled ${fmt(check.pulled)} ${escapeHtml(check.uom||'')} = Administered ${fmt(check.administered)} ${escapeHtml(check.uom||'')} + Wasted ${fmt(check.wasted)} ${escapeHtml(check.uom||'')}${convertedNote}</div>
   </div>`;
 }
 
@@ -1920,6 +1921,61 @@ function normDoseUnit(u) {
   return DOSE_UNIT_ALIASES[s] || s;
 }
 
+// Exact SI metric-prefix ratios (value expressed in mg-equivalents). Unlike
+// the "never guess a conversion factor" caution elsewhere, mg/mcg/g are a
+// fixed, universal 1000x relationship -- not a clinical assumption, just
+// arithmetic -- so converting between them is always safe. "unit" (insulin,
+// heparin, etc.) is deliberately excluded: a potency unit has no fixed
+// relationship to mass at all, it's drug-specific, so it can only ever be
+// converted via that drug's own labeled concentration below, never directly.
+const MASS_UNIT_TO_MG = { mcg: 0.001, mg: 1, g: 1000 };
+
+// Parses a drug's own labeled concentration -- e.g. the "50 MCG/1 ML" inside
+// "fentaNYL 50 MCG/1 ML (2 ML) Injection" -- straight out of that specific
+// product's text. This is what makes an mL-vs-mg/mcg/unit conversion safe:
+// the ratio comes from the drug's own label on the very row being converted,
+// never a generic assumption applied across drugs. Returns null when the
+// text has no such ratio to find.
+function parseConcentration(productText) {
+  // The volume side's number is often omitted when it's 1 (e.g. "100 UNIT/ML"
+  // means 100 units per 1 mL, not per some unstated amount) -- defaults to 1
+  // rather than requiring it explicitly.
+  const m = (productText || '').toString().match(/(\d+(?:\.\d+)?)\s*(mcg|mg|g|units?|u)\s*\/\s*(\d+(?:\.\d+)?)?\s*m?l\b/i);
+  if (!m) return null;
+  const massValue = parseFloat(m[1]);
+  const volumeValue = m[3] ? parseFloat(m[3]) : 1;
+  if (!massValue || !volumeValue) return null;
+  return { massValue, massUnit: normDoseUnit(m[2]), volumeValue, volumeUnit: 'ml' };
+}
+
+// Converts {value in `unit`} into `targetUnit`, returning null when there's
+// no safe way to do it -- the caller falls back to Unit Mismatch rather than
+// comparing incompatible units. Three cases are safe: no conversion needed;
+// both sides are exact SI mass units (mg/mcg/g, fixed math); or one side is
+// mL and a per-transaction concentration ratio is available to bridge to the
+// other side's mass/potency unit (using that drug's own labeled strength,
+// never an assumed one). Anything else -- most importantly a bare "unit"
+// with no stated concentration -- returns null rather than guessing.
+function convertDoseUnit(value, unit, targetUnit, concentration) {
+  if (unit === targetUnit) return value;
+  if (unit in MASS_UNIT_TO_MG && targetUnit in MASS_UNIT_TO_MG) {
+    return value * MASS_UNIT_TO_MG[unit] / MASS_UNIT_TO_MG[targetUnit];
+  }
+  if (!concentration || concentration.volumeUnit !== 'ml') return null;
+  if (unit === 'ml') {
+    const massAmount = value * (concentration.massValue / concentration.volumeValue); // in concentration.massUnit
+    if (concentration.massUnit === targetUnit) return massAmount;
+    if (concentration.massUnit in MASS_UNIT_TO_MG && targetUnit in MASS_UNIT_TO_MG) {
+      return massAmount * MASS_UNIT_TO_MG[concentration.massUnit] / MASS_UNIT_TO_MG[targetUnit];
+    }
+    return null;
+  }
+  if (targetUnit === 'ml' && concentration.massUnit === unit) {
+    return value * (concentration.volumeValue / concentration.massValue);
+  }
+  return null;
+}
+
 // Sums parsed dose amounts across a set of BCMA event rows (e.g. all Charge on
 // Administration rows for one FIN+drug), tracking whether every row agreed on
 // a unit so a silent mg-vs-mL sum never happens.
@@ -1965,8 +2021,15 @@ function computeDosePyxisQuantities(r, indexes) {
     candidates = fallback.filter(identityMatch);
     basis = 'Patient+Day';
   }
-  const sumQty = (txns) => {
+  // Sums each transaction's Quantity into targetUnit, converting per-transaction
+  // (using that transaction's OWN GENERIC_NAME/MED_ID text for a concentration,
+  // e.g. Waste charted as "0.5 mL" against a Remove charted in mcg) rather than
+  // requiring every transaction to already share one unit. rawTotal/rawUom/
+  // rawMixed are kept alongside purely so a genuine Unit Mismatch can still
+  // show the real, unconverted numbers instead of nothing.
+  const sumQty = (txns, targetUnit) => {
     let total = 0, uom = null, mixedUnits = false, parsedCount = 0;
+    let convTotal = 0, allConverted = true, anyConverted = false;
     txns.forEach(t => {
       const v = parseFloat(t.QUANTITY);
       if (isNaN(v)) return;
@@ -1975,12 +2038,19 @@ function computeDosePyxisQuantities(r, indexes) {
       if (uom === null) uom = u;
       else if (u && u !== uom) mixedUnits = true;
       total += v;
+
+      if (u === targetUnit) { convTotal += v; return; }
+      const converted = convertDoseUnit(v, u, targetUnit, parseConcentration(t.GENERIC_NAME || t.MED_ID));
+      if (converted === null) { allConverted = false; return; }
+      anyConverted = true;
+      convTotal += converted;
     });
-    return { total, uom, mixedUnits, parsedCount };
+    return { total, uom, mixedUnits, parsedCount, convTotal, allConverted, anyConverted };
   };
   return {
-    pulled: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'remove'))),
-    wasted: sumQty(candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'waste'))),
+    sumQty,
+    pulledTxns: candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'remove')),
+    wasteTxns: candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, 'waste')),
     basis
   };
 }
@@ -1994,21 +2064,27 @@ function computeDoseBalance(r, indexes) {
   const admin = r.administeredDose;
   if (!admin || admin.parsedCount === 0) return null;
   if (!indexes) return { status: 'No Pyxis File', administered: admin.total, uom: admin.uom };
+  if (admin.mixedUnits) return { status: 'Unit Mismatch', administered: admin.total, administeredUom: admin.uom };
 
-  const { pulled, wasted, basis } = computeDosePyxisQuantities(r, indexes);
+  // Always expressed in whatever unit BCMA charted -- Pyxis's pulled/wasted
+  // quantities are converted TO this, never the other way, since that's the
+  // one side that can't be re-derived from a concentration ratio.
+  const target = admin.uom;
+  const { sumQty, pulledTxns, wasteTxns, basis } = computeDosePyxisQuantities(r, indexes);
+  const pulled = sumQty(pulledTxns, target);
+  const wasted = sumQty(wasteTxns, target);
   if (pulled.parsedCount === 0) return { status: 'No Pyxis Quantity Data', administered: admin.total, uom: admin.uom };
 
-  const units = [admin.uom, pulled.uom, wasted.parsedCount > 0 ? wasted.uom : null].filter(Boolean);
-  const unitsConsistent = units.every(u => u === units[0]);
-  if (!unitsConsistent || admin.mixedUnits || pulled.mixedUnits || wasted.mixedUnits) {
-    return { status: 'Unit Mismatch', administered: admin.total, administeredUom: admin.uom, pulled: pulled.total, pulledUom: pulled.uom, wasted: wasted.total, wastedUom: wasted.uom, basis };
+  if (!pulled.allConverted || !wasted.allConverted) {
+    return { status: 'Unit Mismatch', administered: admin.total, administeredUom: admin.uom, pulled: pulled.total, pulledUom: pulled.uom, wasted: wasted.parsedCount > 0 ? wasted.total : 0, wastedUom: wasted.uom, basis };
   }
 
-  const accountedFor = admin.total + wasted.total;
-  const gap = Math.round((pulled.total - accountedFor) * 10000) / 10000;
+  const accountedFor = admin.total + wasted.convTotal;
+  const gap = Math.round((pulled.convTotal - accountedFor) * 10000) / 10000;
   const TOL = 0.01;
   const balanced = Math.abs(gap) <= TOL;
-  return { status: balanced ? 'Balanced' : 'Discrepancy', pulled: pulled.total, wasted: wasted.total, administered: admin.total, uom: admin.uom, gap, balanced, basis };
+  const converted = pulled.anyConverted || wasted.anyConverted;
+  return { status: balanced ? 'Balanced' : 'Discrepancy', pulled: pulled.convTotal, wasted: wasted.convTotal, administered: admin.total, uom: target, gap, balanced, basis, converted };
 }
 
 function recomputePyxisStatus() {
