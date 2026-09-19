@@ -633,7 +633,7 @@ function renderCallouts() {
     <div class="callout slate"><span>🔄</span><div><b>Netting rule:</b> A Device Return offsets one Device Dispense, and a Credit on Administration offsets one Charge, within the same FIN. Counts below reflect raw and net values.</div></div>
     <div class="callout teal"><span>🔗</span><div><b>Cross-FIN matching:</b> Some encounters get split across two FINs for the same patient, same drug, same day, same unit — rescheduling, registration changes, or an appointment mishap. A pair is only auto-resolved when exactly two FINs share that bucket and their dispense/charge activity nets to exactly zero between them; anything more ambiguous (more than two FINs, or nets that don't cancel) is left unresolved and surfaced in "Cross-FIN Groups Needing Review" instead of being silently paired.</div></div>
     <div class="callout blue"><span>🧪</span><div><b>NDC crosswalk:</b> Where dispense and charge counts match but NDCs differ, it's flagged as <b>Balanced (NDC Mismatch)</b> — the pairing is complete, but pharmacy/billing should confirm whether the NDC difference is an expected package-to-billing-unit mapping.</div></div>
-    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text) using word-boundary token matching (not raw substring containment, which would wrongly match unrelated drugs like epinephrine/norepinephrine) — this still confirms a dispense/charge that's the right drug charted at the wrong strength or salt form, flagged separately as a formulation note rather than treated as silently identical. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
+    <div class="callout emerald"><span>🛡️</span><div><b>Pyxis cross-check (all formulary drugs):</b> Each BCMA Device Dispense is checked against a Pyxis <b>Remove</b>, and each Device Return against a Pyxis <b>Return/Restock/Waste</b>, scoped to FIN + same-day activity (falling back to patient + same-day when a patient has more than one FIN in a day). Drug identity is confirmed in two tiers: first an <b>exact match</b> between BCMA's ADM_ID and Pyxis's Med ID; if that doesn't line up, a <b>fuzzy fallback</b> compares BCMA's Formulary Generic Name against Pyxis's Generic Name (or Med ID text) using word-boundary token matching (not raw substring containment, which would wrongly match unrelated drugs like epinephrine/norepinephrine) — this still confirms a dispense/charge that's the right drug charted at the wrong strength or salt form, flagged separately as a formulation note rather than treated as silently identical. Separately, a 🔀 in the Pyxis column means the drug identity matched but the SPECIFIC size/strength Pyxis's Med Description says was actually pulled (e.g. fentanyl 100mcg/2mL) differs from what BCMA charted (e.g. 250mcg/5mL) — the same drug, a different vial. Every row's detail panel lists the raw Pyxis activity seen and which tier confirmed it, so nothing is trusted blind. <b>Verified</b> = every applicable BCMA event has a matching Pyxis transaction. <b>Not in Extract</b> = no Pyxis activity was found for this patient/FIN/day at all. <b>Discrepancy</b> = Pyxis activity exists for this patient/day but none of it is both the right transaction type and the right drug. ${PYXIS_TXNS ? `Currently using a live Pyxis file (${PYXIS_TXNS.length} transactions).` : 'No Pyxis file is currently loaded — drop a Pyxis export into the second dropzone above to compute this.'}</div></div>
     ${DOSE_COLUMN_PRESENT ? `<div class="callout blue"><span>⚖️</span><div><b>Dose Balance (quantity, not event count):</b> Everything above counts events -- a charge showing "1" means one charge happened, not one full dose. This check instead sums actual amounts: BCMA's <b>DOSE_ADMINISTERED</b> (net of any Credit on Administration, which reverses a charted dose the same way it reverses a charge count) against Pyxis's <b>Quantity</b> on Remove ("pulled") and Waste. <b>Balanced</b> = Pulled equals Administered + Wasted. <b>Discrepancy</b> = they don't add up -- a real diversion signal the event-count check above cannot see even when every expected event is present. <b>Unit Mismatch</b> = BCMA and Pyxis disagree on unit with no safe way to reconcile it. Pyxis quantities are converted to whatever unit BCMA charted when that's safe: mg/mcg/g convert to each other exactly (fixed metric math), and an mL-denominated Waste or Remove (nurses often chart waste by volume) converts using that specific drug's own labeled concentration (e.g. the "50 MCG/1 ML" inside its product name) -- never a generic mL-to-mg assumption applied across drugs. Uses the same FIN-first, Patient+Day-fallback matching as the Pyxis cross-check above, so a cross-FIN split resolves correctly instead of falsely reading as missing data.</div></div>` : ''}
   `;
 }
@@ -1326,7 +1326,9 @@ function renderDetailTable() {
     const ndcApplicable = r.dispenseNdcs && r.chargeNdcs;
     const ndcIcon = !ndcApplicable ? '<span class="muted">n/a</span>' : (r.ndcMatch ? '✅' : '🧪');
     const pStatus = r.pyxisStatus || 'N/A';
-    const pyxisIcon = pStatus === 'Verified' ? '🛡️' : pStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : (pStatus.indexOf('Partial') === 0 ? '<span class="badge amber">◐</span>' : '<span class="muted">—</span>');
+    const hasProductMismatch = r.pyxisProductMismatch && r.pyxisProductMismatch.length > 0;
+    const pyxisIcon = hasProductMismatch ? '<span class="badge amber" title="Pyxis pulled a different size/strength than charted">🔀</span>'
+      : pStatus === 'Verified' ? '🛡️' : pStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : (pStatus.indexOf('Partial') === 0 ? '<span class="badge amber">◐</span>' : '<span class="muted">—</span>');
     const dbStatus = r.doseBalance ? r.doseBalance.status : null;
     const doseIcon = dbStatus === 'Balanced' ? '⚖️' : dbStatus === 'Discrepancy' ? '<span class="badge red">⚠</span>' : dbStatus === 'Unit Mismatch' ? '<span class="badge amber">≠</span>' : '<span class="muted">—</span>';
     let html = `<tr class="${rowCls}" style="cursor:pointer" data-fin="${escapeHtml(r.fin)}" data-rowkey="${escapeHtml(r.rowKey)}">
@@ -1348,7 +1350,7 @@ function renderDetailTable() {
         : (PYXIS_TXNS ? 'No device dispense/return on this FIN to verify.' : 'No Pyxis file loaded.')) + doseBalanceLine(r.doseBalance);
       html += `<tr class="detail-row"><td colspan="${colCount}">
         <div class="detail-grid">
-          <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.genericName)}${r.strengthMismatch ? `<div class="muted" style="margin-top:2px;">⚠ Strength/formulation mismatch — charted as: <span class="mono">${escapeHtml(r.product)}</span> — verify charting</div>` : ''}</div></div>
+          <div><div class="field-label">Drug</div><div class="field-value">${escapeHtml(r.genericName)}${r.strengthMismatch ? `<div class="muted" style="margin-top:2px;">⚠ Strength/formulation mismatch — charted as: <span class="mono">${escapeHtml(r.product)}</span> — verify charting</div>` : ''}${r.pyxisProductMismatch && r.pyxisProductMismatch.length ? `<div class="muted" style="margin-top:2px;">⚠ Pyxis pulled a different size/strength than charted — charted: <span class="mono">${escapeHtml(r.product)}</span>, pulled: <span class="mono">${escapeHtml(r.pyxisProductMismatch.join('; '))}</span> — verify the correct vial/size was used</div>` : ''}</div></div>
           <div><div class="field-label">Facility</div><div class="field-value">${escapeHtml(r.facility)}</div></div>
           ${r.pharmacyEvents && r.pharmacyEvents.length ? `<div style="grid-column: 1 / -1;"><div class="field-label">Pharmacy-Side Activity (not a device dispense)</div><div class="field-value">${r.pharmacyEvents.map(escapeHtml).join(' &nbsp;|&nbsp; ')} <span class="muted">— confirm with pharmacy whether the medication was actually given</span></div></div>` : ''}
           <div style="grid-column: 1 / -1;"><div class="field-label">Pyxis Verification</div><div class="field-value">${pyxisDetail}</div></div>
@@ -1441,6 +1443,7 @@ function exportToExcel() {
     'Pyxis Dispense Activity Seen': (r.pyxisDispenseCheck && r.pyxisDispenseCheck.seenTxns) ? r.pyxisDispenseCheck.seenTxns.join(' | ') : '',
     'Pyxis Return Check': pyxisCheckExportText(r.pyxisReturnCheck),
     'Pyxis Return Activity Seen': (r.pyxisReturnCheck && r.pyxisReturnCheck.seenTxns) ? r.pyxisReturnCheck.seenTxns.join(' | ') : '',
+    'Pyxis Product Differs From Charted': (r.pyxisProductMismatch && r.pyxisProductMismatch.length) ? r.pyxisProductMismatch.join(' | ') : '',
     'Dose Balance Status': r.doseBalance ? r.doseBalance.status : '',
     'Dose Pulled (Pyxis)': r.doseBalance && r.doseBalance.pulled !== undefined ? r.doseBalance.pulled : '',
     'Dose Administered (BCMA net of credits)': r.doseBalance ? r.doseBalance.administered : '',
@@ -1827,6 +1830,45 @@ function drugMatchFuzzyRisk(pyxisText, bcmaGenericName) {
   return shorterCore.join(' ') === longerCore.join(' ') ? 'formulation' : 'classname';
 }
 
+// Pulls every "<number><unit>" strength token out of a product string (e.g.
+// "100mcg" and "2ml" out of "fentaNYL 100 MCG/2 ML (2 ML) Injection"),
+// normalizes and sorts them, and joins into a signature for comparing what
+// two product descriptions actually say the size/strength is. Deliberately
+// the OPPOSITE of stripStrength/drugMatches, which discard this exact
+// information on purpose so different vial sizes of the same drug group
+// together for matching -- this exists to catch the case that grouping
+// hides: Pyxis's Med Description says a different size was actually pulled
+// (e.g. fentanyl 100mcg/2mL) than what BCMA charted (e.g. 250mcg/5mL), even
+// though both are confirmed to be the same drug. Returns null when the text
+// has no strength tokens at all, so a genuinely blank/generic name never
+// false-flags against one that has strength info.
+function extractStrengthSignature(text) {
+  const matches = [...(text || '').toString().matchAll(/(\d+(?:\.\d+)?)\s*(mcg|mg|g|ml|units?|u|tab(?:let)?s?)\b/gi)];
+  if (matches.length === 0) return null;
+  const tokens = matches.map(m => `${parseFloat(m[1])}${normDoseUnit(m[2])}`);
+  return [...new Set(tokens)].sort().join(',');
+}
+
+// True only when BOTH sides have at least one strength token AND they
+// differ -- never flags when either side has nothing to compare.
+function productStrengthMismatch(productA, productB) {
+  const a = extractStrengthSignature(productA);
+  const b = extractStrengthSignature(productB);
+  return !!(a && b && a !== b);
+}
+
+// True when the Pyxis product matches NONE of the individually-charted BCMA
+// products for this row. Checking against each one separately (not the
+// joined "productA / productB" display string) matters when a FIN legitimately
+// charted more than one size across different rows (already flagged via
+// strengthMismatch) -- a Pyxis pull matching ANY one of those charted sizes
+// is a real match, not a mismatch, even though it won't equal the combined
+// joined string.
+function productStrengthMismatchAny(chartedProducts, pyxisProduct) {
+  const products = (chartedProducts && chartedProducts.length) ? chartedProducts : [null];
+  return products.every(p => productStrengthMismatch(p, pyxisProduct));
+}
+
 function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, indexes) {
   const dates = (eventDatesStr || '').split(';').map(s => s.trim()).filter(Boolean);
   if (dates.length === 0) return null;
@@ -1835,6 +1877,7 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, inde
   let matchBasis = null;
   let fuzzyRisk = null;
   const seenTxns = [];
+  const matchedProductTexts = new Set();
   const allVerified = dates.every(dd => {
     const day = dateOnly(dd);
     let candidates = (indexes.byFin[r.fin] || []).filter(t => dateOnly(t.TRANSACTION_DT) === day);
@@ -1853,18 +1896,28 @@ function checkEventAgainstPyxis(r, eventDatesStr, admIds, expectedTypeSpec, inde
     candidates.forEach(t => seenTxns.push(`${t.MED_ID || '(no Med ID)'}${t.GENERIC_NAME ? ' / ' + t.GENERIC_NAME : ''} — ${t.TRANSACTION_TYPE || '?'} @ ${t.TRANSACTION_DT || '?'}`));
 
     const typeMatches = candidates.filter(t => pyxisTypeMatchesSpec(t.TRANSACTION_TYPE, expectedTypeSpec));
-    if (typeMatches.some(t => admIdMatches(t.MED_ID, admIds))) { matchBasis = `${locBasis} + ADM_ID`; return true; }
+    const admIdHit = typeMatches.find(t => admIdMatches(t.MED_ID, admIds));
+    if (admIdHit) {
+      matchBasis = `${locBasis} + ADM_ID`;
+      if (admIdHit.GENERIC_NAME) matchedProductTexts.add(admIdHit.GENERIC_NAME);
+      return true;
+    }
     const fuzzyMatch = typeMatches.find(t => drugMatches(t.GENERIC_NAME || t.MED_ID, r.genericName));
     if (fuzzyMatch) {
       matchBasis = `${locBasis} + Generic Name (fuzzy)`;
       fuzzyRisk = drugMatchFuzzyRisk(fuzzyMatch.GENERIC_NAME || fuzzyMatch.MED_ID, r.genericName);
+      if (fuzzyMatch.GENERIC_NAME) matchedProductTexts.add(fuzzyMatch.GENERIC_NAME);
       return true;
     }
     return false;
   });
   const uniqueSeen = [...new Set(seenTxns)];
   if (!anyCandidates) return { status: 'Not in Extract', basis: null, seenTxns: [] };
-  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis, seenTxns: uniqueSeen, fuzzyRisk };
+  // Even though the drug identity is confirmed (by ADM_ID or fuzzy generic
+  // name), the SPECIFIC product Pyxis says was pulled can still be a
+  // different size/strength than what BCMA charted -- same drug, wrong vial.
+  const mismatchedProducts = [...matchedProductTexts].filter(pt => productStrengthMismatchAny(r.rawProducts, pt));
+  return { status: allVerified ? 'Verified' : 'Discrepancy', basis: matchBasis, seenTxns: uniqueSeen, fuzzyRisk, mismatchedProducts };
 }
 
 // ============ DOSE BALANCE (pulled vs. administered vs. wasted, by quantity) ============
@@ -2092,6 +2145,7 @@ function recomputePyxisStatus() {
     REPORT.forEach(r => {
       r.pyxisStatus = 'N/A'; r.pyxisDispenseCheck = null; r.pyxisReturnCheck = null;
       r.doseBalance = DOSE_COLUMN_PRESENT ? computeDoseBalance(r, null) : null;
+      r.pyxisProductMismatch = [];
     });
     return;
   }
@@ -2105,6 +2159,10 @@ function recomputePyxisStatus() {
     r.pyxisDispenseCheck = dispenseCheck;
     r.pyxisReturnCheck = returnCheck;
     r.doseBalance = DOSE_COLUMN_PRESENT ? computeDoseBalance(r, indexes) : null;
+    r.pyxisProductMismatch = [...new Set([
+      ...((dispenseCheck && dispenseCheck.mismatchedProducts) || []),
+      ...((returnCheck && returnCheck.mismatchedProducts) || [])
+    ])];
 
     const checks = [dispenseCheck, returnCheck].filter(Boolean);
     if (checks.length === 0) r.pyxisStatus = 'N/A';
@@ -2296,11 +2354,11 @@ function parseSheetToReport(rows) {
       dispenseDates: dispenses.map(d=>d.EVENT_DT_TM).join('; '), chargeDates: charges.map(c=>c.EVENT_DT_TM).join('; '),
       returnDates: returns.map(r=>r.EVENT_DT_TM).join('; '), creditDates: credits.map(c=>c.EVENT_DT_TM).join('; '),
       pharmacyEvents: pharmacyEvents.map(p => `${p.EVENT_TYPE} @ ${p.EVENT_DT_TM || '?'}`),
-      genericName: genericNameOf(first), product: rawProducts.join(' / ') || (first.ASSIGNED_PRODUCT||''),
+      genericName: genericNameOf(first), product: rawProducts.join(' / ') || (first.ASSIGNED_PRODUCT||''), rawProducts,
       strengthMismatch: rawProducts.length > 1,
       orderIds: uniq(frows.map(r=>r.ORDER_ID)).join('; '),
       administeredDose,
-      pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null, doseBalance: null
+      pyxisStatus: 'N/A', pyxisDispenseCheck: null, pyxisReturnCheck: null, doseBalance: null, pyxisProductMismatch: []
     };
   });
   return { reportRows, crossFinWarnings };
